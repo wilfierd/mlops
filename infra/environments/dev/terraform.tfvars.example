@@ -1,0 +1,23 @@
+project     = "llm-chat"
+environment = "dev"
+region      = "us-west-2"
+
+worker_az = "us-west-2a"
+extra_az  = "us-west-2b"
+
+eks_version = "1.30"
+
+node_instance_types = ["t3.xlarge"]
+node_capacity_type  = "ON_DEMAND"
+node_min_size       = 1
+node_desired_size   = 2
+node_max_size       = 4
+
+image_tag        = "0.1.0"
+model_id         = "HuggingFaceTB/SmolLM2-135M-Instruct"
+ray_replica_max  = 3
+ray_replica_cpus = 3
+
+tags = {
+  Owner = "your-name"
+}

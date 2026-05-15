@@ -1,0 +1,7 @@
+fastapi==0.115.6
+httpx==0.28.1
+pydantic==2.12.4
+ray[serve]==2.55.1
+torch==2.7.1
+transformers==4.53.3
+uvicorn==0.34.0

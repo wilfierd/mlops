@@ -1,0 +1,76 @@
+name: ci
+
+# Runs on every PR + push to main. Cheap checks only: format, validate, lint.
+# No AWS calls — anyone can run without configured secrets.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: 1.9.5
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  terraform-check:
+    name: terraform fmt + validate + tfsec
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform fmt -check
+        working-directory: infra
+        run: terraform fmt -recursive -check -diff
+
+      - name: terraform validate (bootstrap)
+        working-directory: infra/bootstrap
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: terraform validate (environments/dev)
+        working-directory: infra/environments/dev
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: infra
+          soft_fail: true # lab: don't block on findings
+
+  app-check:
+    name: python syntax + import
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: syntax check
+        run: python -m py_compile app/server.py scripts/load_test.py
+
+      - name: lint imports + load_test args parse
+        run: |
+          pip install httpx
+          python scripts/load_test.py --help
+
+  shell-check:
+    name: shellcheck on scripts/*.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ludeeus/action-shellcheck@master
+        with:
+          additional_files: "infra/scripts/push_image.sh"
+          severity: error

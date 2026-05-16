@@ -54,3 +54,26 @@ module "kuberay" {
 
   depends_on = [module.eks]
 }
+
+module "cost" {
+  count  = var.monthly_budget_usd > 0 ? 1 : 0
+  source = "../../modules/cost"
+
+  name               = var.project
+  monthly_budget_usd = var.monthly_budget_usd
+  alert_emails       = var.budget_alert_emails
+
+  tags = local.tags
+}
+
+module "observability" {
+  count  = var.enable_observability ? 1 : 0
+  source = "../../modules/observability"
+
+  ray_namespace          = module.kuberay.namespace
+  grafana_admin_password = var.grafana_admin_password
+
+  tags = local.tags
+
+  depends_on = [module.kuberay]
+}

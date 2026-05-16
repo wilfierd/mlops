@@ -1,0 +1,48 @@
+name: destroy
+
+# Manual-only. Tears down an environment. Guarded by environment approval
+# (configure in repo Settings → Environments → dev → required reviewers).
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to destroy"
+        required: true
+        default: dev
+        type: choice
+        options: [dev]
+      confirm:
+        description: 'Type the environment name to confirm (e.g. "dev")'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  TF_VERSION: 1.9.5
+
+jobs:
+  destroy:
+    if: ${{ inputs.environment == inputs.confirm }}
+    name: terraform destroy
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-destroy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - working-directory: infra/environments/${{ inputs.environment }}
+        run: |
+          terraform init
+          terraform destroy -auto-approve

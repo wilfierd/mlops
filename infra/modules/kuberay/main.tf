@@ -101,6 +101,15 @@ locals {
                   requests = { cpu = var.head_cpu_request, memory = var.head_memory_request }
                   limits   = { cpu = var.head_cpu_limit, memory = var.head_memory_limit }
                 }
+                # Head expose Serve HTTP proxy. Readiness gate on /-/healthz
+                # ensures the K8s service only routes to head when the proxy is up.
+                readinessProbe = {
+                  httpGet             = { path = "/-/healthz", port = 8000 }
+                  initialDelaySeconds = 20
+                  periodSeconds       = 10
+                  timeoutSeconds      = 5
+                  failureThreshold    = 3
+                }
                 volumeMounts = [{ name = "hf-cache", mountPath = "/tmp/huggingface" }]
               }]
               volumes = [{ name = "hf-cache", emptyDir = {} }]
@@ -125,6 +134,15 @@ locals {
                   requests = { cpu = var.worker_cpu_request, memory = var.worker_memory_request }
                   limits   = { cpu = var.worker_cpu_limit, memory = var.worker_memory_limit }
                 }
+                # Worker hosts the ChatModel actor. /-/healthz on 8000 returns 200
+                # only when the Serve replica has loaded the model.
+                readinessProbe = {
+                  httpGet             = { path = "/-/healthz", port = 8000 }
+                  initialDelaySeconds = 30
+                  periodSeconds       = 10
+                  timeoutSeconds      = 5
+                  failureThreshold    = 3
+                }
                 volumeMounts = [{ name = "hf-cache", mountPath = "/tmp/huggingface" }]
               }]
               volumes = [{ name = "hf-cache", emptyDir = {} }]
@@ -148,4 +166,52 @@ resource "kubectl_manifest" "rayservice" {
     helm_release.kuberay_operator,
     kubernetes_namespace.app,
   ]
+}
+
+# Head is the singleton (Serve HTTP proxy + GCS). Voluntary disruption (node
+# drain, MNG upgrade) must NOT evict it — losing head = whole RayService restart.
+resource "kubectl_manifest" "pdb_head" {
+  yaml_body = yamlencode({
+    apiVersion = "policy/v1"
+    kind       = "PodDisruptionBudget"
+    metadata = {
+      name      = "${var.service_name}-head"
+      namespace = var.namespace
+    }
+    spec = {
+      maxUnavailable = 0
+      selector = {
+        matchLabels = {
+          "ray.io/cluster"   = var.service_name
+          "ray.io/node-type" = "head"
+        }
+      }
+    }
+  })
+
+  depends_on = [kubectl_manifest.rayservice]
+}
+
+# Workers are replicas. Keep at least 1 healthy during disruption so the chat
+# never has zero replicas serving traffic.
+resource "kubectl_manifest" "pdb_worker" {
+  yaml_body = yamlencode({
+    apiVersion = "policy/v1"
+    kind       = "PodDisruptionBudget"
+    metadata = {
+      name      = "${var.service_name}-worker"
+      namespace = var.namespace
+    }
+    spec = {
+      minAvailable = 1
+      selector = {
+        matchLabels = {
+          "ray.io/cluster"   = var.service_name
+          "ray.io/node-type" = "worker"
+        }
+      }
+    }
+  })
+
+  depends_on = [kubectl_manifest.rayservice]
 }

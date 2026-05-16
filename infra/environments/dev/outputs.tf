@@ -36,3 +36,19 @@ output "ecr_login_command" {
   value       = "aws ecr get-login-password --region ${var.region} | docker login --username AWS --password-stdin ${split("/", module.ecr.repository_url)[0]}"
   description = "Run this before docker push"
 }
+
+output "grafana_port_forward_command" {
+  value       = var.enable_observability ? module.observability[0].port_forward_grafana_command : "(observability disabled)"
+  description = "Open Grafana locally"
+}
+
+output "grafana_admin_password" {
+  value       = var.enable_observability ? module.observability[0].grafana_admin_password : ""
+  sensitive   = true
+  description = "Grafana admin password (auto-generated unless overridden)"
+}
+
+output "prometheus_port_forward_command" {
+  value       = var.enable_observability ? module.observability[0].port_forward_prometheus_command : "(observability disabled)"
+  description = "Open Prometheus locally"
+}

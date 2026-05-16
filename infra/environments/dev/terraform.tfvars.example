@@ -18,6 +18,12 @@ model_id         = "Qwen/Qwen3-0.6B"
 ray_replica_max  = 3
 ray_replica_cpus = 3
 
+monthly_budget_usd  = 100
+budget_alert_emails = []  # ["you@example.com"] to enable email alerts
+
+enable_observability   = true
+grafana_admin_password = ""  # empty = auto-generate, fetch via `terraform output -raw grafana_admin_password`
+
 tags = {
   Owner = "your-name"
 }

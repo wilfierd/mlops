@@ -6,12 +6,18 @@ Terraform stack for a CPU-only Ray Serve LLM chat deployment on EKS.
 
 ```
 infra/
+├── bootstrap/                   # ONE-TIME stack: S3 state bucket + DDB lock + GH OIDC role
+│   ├── versions.tf
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   └── terraform.tfvars.example
 ├── environments/                # LIVE config — one dir per env
 │   └── dev/
-│       ├── versions.tf          # provider/terraform version pins
-│       ├── providers.tf         # aws + kubernetes + helm + kubectl wired to EKS
-│       ├── backend.tf.example   # copy to backend.tf for S3 remote state
-│       ├── variables.tf         # all knobs the env exposes
+│       ├── versions.tf
+│       ├── providers.tf
+│       ├── backend.tf.example   # filled in after bootstrap
+│       ├── variables.tf
 │       ├── main.tf              # composes modules
 │       ├── outputs.tf
 │       └── terraform.tfvars.example
@@ -19,7 +25,9 @@ infra/
 │   ├── network/                 # VPC (2 AZ control plane + 1 AZ workers + 1 NAT)
 │   ├── ecr/                     # ECR repo + lifecycle policy
 │   ├── eks/                     # EKS cluster + MNG (wraps terraform-aws-modules)
-│   └── kuberay/                 # KubeRay operator (Helm) + RayService (kubectl)
+│   ├── kuberay/                 # KubeRay operator (Helm) + RayService (kubectl) + PDB
+│   ├── observability/           # kube-prometheus-stack + Ray ServiceMonitor + Grafana dashboard
+│   └── cost/                    # AWS Budget + tag-based filter + email alerts
 ├── scripts/
 │   └── push_image.sh            # build + ECR login + push + roll pods
 └── README.md                    # this file
@@ -27,6 +35,29 @@ infra/
 
 Each module has its own `versions.tf`, `README.md`, `variables.tf`,
 `outputs.tf` and `main.tf` so it drops into another repo without changes.
+
+## First-time setup
+
+```bash
+# 1. bootstrap (creates state bucket + DDB + GH OIDC role, uses local state)
+cd infra/bootstrap
+cp terraform.tfvars.example terraform.tfvars
+# edit: set github_repository = "your-org/your-repo" if using CI/CD
+terraform init
+terraform apply
+terraform output -raw backend_config   # copy into next step
+
+# 2. wire backend for dev env
+cd ../environments/dev
+cp backend.tf.example backend.tf
+# replace <ACCOUNT_ID> with `aws sts get-caller-identity --query Account --output text`
+cp terraform.tfvars.example terraform.tfvars
+# edit knobs as desired
+terraform init   # migrates state to S3
+
+# 3. apply
+terraform apply
+```
 
 ## Add a new environment
 

@@ -1,0 +1,125 @@
+name: deploy
+
+# Manual deploy + automatic deploy on push to main.
+# Requires `infra/bootstrap` to be applied once with `github_repository`
+# set, which creates the OIDC trust + IAM role used here.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "infra/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: dev
+        type: choice
+        options: [dev]
+      skip_image_build:
+        description: "Skip image build/push (re-apply TF only)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  id-token: write # OIDC -> AWS
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  TF_VERSION: 1.9.5
+  PROJECT: llm-chat
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+jobs:
+  build-image:
+    if: ${{ inputs.skip_image_build != true }}
+    name: build + push image to ECR
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive image tag from commit
+        id: meta
+        run: echo "tag=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build + push (linux/arm64 for m7g nodes)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          build-args: |
+            MODEL_ID=Qwen/Qwen3-0.6B
+            PRELOAD_MODEL=true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.PROJECT }}-${{ inputs.environment || 'dev' }}-ray:${{ steps.meta.outputs.tag }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.PROJECT }}-${{ inputs.environment || 'dev' }}-ray:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  terraform-apply:
+    needs: [build-image]
+    if: |
+      always() &&
+      (needs.build-image.result == 'success' || inputs.skip_image_build == true)
+    name: terraform apply
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'dev' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [[ "${{ inputs.skip_image_build }}" == "true" ]]; then
+            echo "tag=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ needs.build-image.outputs.image_tag }}" >> $GITHUB_OUTPUT
+          fi
+
+      - working-directory: infra/environments/${{ inputs.environment || 'dev' }}
+        run: |
+          terraform init
+          terraform apply -auto-approve -var "image_tag=${{ steps.tag.outputs.tag }}"
+
+      - name: Wire kubectl + roll Ray pods
+        working-directory: infra/environments/${{ inputs.environment || 'dev' }}
+        run: |
+          CLUSTER=$(terraform output -raw cluster_name)
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name "$CLUSTER"
+          kubectl -n llm-chat delete pod --all --grace-period=0 --force || true
+
+      - name: Show outputs
+        working-directory: infra/environments/${{ inputs.environment || 'dev' }}
+        run: terraform output

@@ -1,0 +1,12 @@
+project = "llm-chat"
+region  = "us-west-2"
+
+# Set to your GitHub repo (org/repo) to create the OIDC trust + deploy role.
+# Leave empty to skip — you can re-apply bootstrap later to add it.
+github_repository = ""
+
+tags = {
+  Project   = "llm-chat"
+  ManagedBy = "terraform"
+  Stack     = "bootstrap"
+}

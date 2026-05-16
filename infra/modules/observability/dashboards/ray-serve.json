@@ -1,0 +1,146 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "tags": ["ray", "serve", "llm"],
+  "time": {"from": "now-30m", "to": "now"},
+  "refresh": "15s",
+  "title": "Ray Serve — LLM Chat",
+  "uid": "ray-serve-llm",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Active Serve Replicas",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(ray_serve_num_deployment_replicas_healthy{application=\"llm-chat\"})",
+          "legendFormat": "healthy",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"]}
+      }
+    },
+    {
+      "id": 2,
+      "title": "Request Rate (req/s)",
+      "type": "timeseries",
+      "gridPos": {"x": 6, "y": 0, "w": 9, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(ray_serve_num_http_requests_total[1m])) by (route)",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Ongoing Requests per Replica",
+      "type": "timeseries",
+      "gridPos": {"x": 15, "y": 0, "w": 9, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "ray_serve_num_ongoing_http_requests{application=\"llm-chat\"}",
+          "legendFormat": "{{deployment}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "P50 Latency (s)",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 4, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket[5m])) by (le)) / 1000",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "s", "decimals": 2}
+      }
+    },
+    {
+      "id": 5,
+      "title": "Latency Percentiles (ms)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket[5m])) by (le))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms"}}
+    },
+    {
+      "id": 6,
+      "title": "Error Rate (%)",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "100 * sum(rate(ray_serve_num_http_error_requests_total[5m])) / sum(rate(ray_serve_num_http_requests_total[5m]))",
+          "legendFormat": "% errors",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent"}}
+    },
+    {
+      "id": 7,
+      "title": "CPU per Ray Pod (cores)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"llm-chat\", container!=\"\"}[2m])) by (pod)",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 2}}
+    },
+    {
+      "id": 8,
+      "title": "Memory per Ray Pod (MiB)",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(container_memory_working_set_bytes{namespace=\"llm-chat\", container!=\"\"}) by (pod) / 1024 / 1024",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "MiB"}}
+    }
+  ]
+}

@@ -85,6 +85,31 @@ variable "ray_replica_cpus" {
   default = 3
 }
 
+variable "monthly_budget_usd" {
+  description = "Monthly cost budget cap (USD). 0 = skip budget module."
+  type        = number
+  default     = 100
+}
+
+variable "budget_alert_emails" {
+  description = "Emails to notify when budget thresholds are crossed"
+  type        = list(string)
+  default     = []
+}
+
+variable "enable_observability" {
+  description = "Install kube-prometheus-stack (Prometheus + Grafana)"
+  type        = bool
+  default     = true
+}
+
+variable "grafana_admin_password" {
+  description = "Grafana admin password. Empty = auto-generated, retrieve via terraform output."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "tags" {
   description = "Extra tags applied to all resources"
   type        = map(string)

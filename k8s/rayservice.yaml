@@ -59,9 +59,11 @@ spec:
                   name: serve
               env:
                 - name: MODEL_ID
-                  value: HuggingFaceTB/SmolLM2-135M-Instruct
+                  value: Qwen/Qwen3-0.6B
                 - name: MODEL_DTYPE
                   value: bfloat16
+                - name: ENABLE_THINKING
+                  value: "false"
                 - name: MAX_NEW_TOKENS
                   value: "160"
                 - name: MAX_INPUT_TOKENS
@@ -79,10 +81,10 @@ spec:
               resources:
                 requests:
                   cpu: "2"
-                  memory: 3Gi
+                  memory: 4Gi
                 limits:
                   cpu: "3"
-                  memory: 4Gi
+                  memory: 6Gi
               volumeMounts:
                 - name: hf-cache
                   mountPath: /tmp/huggingface
@@ -103,9 +105,11 @@ spec:
                 imagePullPolicy: IfNotPresent
                 env:
                   - name: MODEL_ID
-                    value: HuggingFaceTB/SmolLM2-135M-Instruct
+                    value: Qwen/Qwen3-0.6B
                   - name: MODEL_DTYPE
                     value: bfloat16
+                  - name: ENABLE_THINKING
+                    value: "false"
                   - name: MAX_NEW_TOKENS
                     value: "160"
                   - name: MAX_INPUT_TOKENS
@@ -123,10 +127,10 @@ spec:
                 resources:
                   requests:
                     cpu: "3"
-                    memory: 3Gi
+                    memory: 4Gi
                   limits:
                     cpu: "4"
-                    memory: 5Gi
+                    memory: 6Gi
                 volumeMounts:
                   - name: hf-cache
                     mountPath: /tmp/huggingface

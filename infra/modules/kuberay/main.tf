@@ -22,6 +22,7 @@ locals {
   common_env = [
     { name = "MODEL_ID", value = var.model_id },
     { name = "MODEL_DTYPE", value = var.model_dtype },
+    { name = "ENABLE_THINKING", value = "false" },
     { name = "MAX_NEW_TOKENS", value = "160" },
     { name = "MAX_INPUT_TOKENS", value = "2048" },
     { name = "TORCH_NUM_THREADS", value = tostring(var.replica_cpus) },

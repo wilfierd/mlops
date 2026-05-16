@@ -9,7 +9,7 @@ Ung dung nay host mot LLM tu quan ly tren CPU bang Ray Serve, chay tren Kubernet
 - `Dockerfile`: image CPU cho Ray Serve + Transformers.
 - `scripts/load_test.py`: tao concurrent request de kiem tra autoscale.
 
-Model mac dinh la `HuggingFaceTB/SmolLM2-135M-Instruct` de demo tren CPU. Co the doi bang bien moi truong `MODEL_ID`.
+Model mac dinh la `Qwen/Qwen3-0.6B`. App dat `ENABLE_THINKING=false` de tat thinking mode, giu latency thap cho chat CPU.
 
 ## Kien truc
 
@@ -163,9 +163,9 @@ Cau hinh autoscale hien tai trong `k8s/rayservice.yaml`:
 | --- | --- | --- |
 | Ray Serve replica | `target_ongoing_requests: 1` | Neu trung binh moi replica co hon 1 request dang xu ly, Serve scale out. |
 | Ray Serve replica | `max_ongoing_requests: 1` | Mot replica xu ly 1 request mot luc — phu hop khi chua bat dynamic batching tren CPU. |
-| Ray Serve replica | `min_replicas: 1`, `max_replicas: 4` | Luon co it nhat 1 model replica, toi da 4. |
-| Ray actor resources | `num_cpus: 2` | Moi model replica can 2 CPU logical trong Ray. |
-| Ray worker pods | `minReplicas: 1`, `maxReplicas: 4` | KubeRay tang worker pod khi cluster thieu CPU cho replica moi. |
+| Ray Serve replica | `min_replicas: 1`, `max_replicas: 3` | Luon co it nhat 1 model replica, toi da 3. |
+| Ray actor resources | `num_cpus: 3` | Moi model replica can 3 CPU logical trong Ray. |
+| Ray worker pods | `minReplicas: 1`, `maxReplicas: 3` | KubeRay tang worker pod khi cluster thieu CPU cho replica moi. |
 | Model dtype | `MODEL_DTYPE=bfloat16` | Suy luan nhanh hon ~1.5–2x so voi float32 tren CPU AVX-512/AMX. |
 
 Dieu quan trong: Serve scale theo request dang xu ly, con KubeRay scale worker pod khi Ray cluster khong con du CPU de schedule replica moi.
@@ -200,11 +200,25 @@ Neu muon bake model vao image de pod khong phai download luc start:
 ```bash
 docker build \
   --build-arg PRELOAD_MODEL=true \
-  --build-arg MODEL_ID=HuggingFaceTB/SmolLM2-135M-Instruct \
+  --build-arg MODEL_ID=Qwen/Qwen3-0.6B \
   -t llm-chat-ray:0.1.0 .
 ```
 
 Push image len registry ma cluster truy cap duoc, hoac load image vao Minikube/kind neu deploy K8S local.
+
+## Build ARM64 cho Graviton
+
+Neu EKS worker dung `m7g/c7g` thi node la ARM64. Image cung phai la ARM64 hoac multi-arch.
+
+Build + push ARM64 len ECR sau khi `terraform apply`:
+
+```bash
+IMAGE_PLATFORM=linux/arm64 PRELOAD_MODEL=true ./infra/scripts/push_image.sh
+```
+
+Neu build ARM64 tren may Fedora x86 bang QEMU/buildx, lan dau thuong lau hon build native nhieu lan do emulation va preload model. Thuc te voi image nay nen tinh khoang 20-45 phut lan dau tuy may/mang/cache. Cach nhanh va sach hon la build tren mot EC2 Graviton tam thoi, push len ECR, roi reuse image.
+
+Neu chua muon xu ly ARM image, dung `m6i.xlarge/m6i.2xlarge` truoc.
 
 ## Deploy tren Kubernetes local
 
@@ -305,7 +319,7 @@ LOAD_IMAGE=minikube ./scripts/deploy.sh
 LOAD_IMAGE=kind ./scripts/deploy.sh
 
 # Doi model
-LOAD_IMAGE=minikube MODEL_ID=Qwen/Qwen2.5-0.5B-Instruct ./scripts/deploy.sh
+LOAD_IMAGE=minikube MODEL_ID=Qwen/Qwen3-0.6B ./scripts/deploy.sh
 
 # Neu KubeRay operator da cai san
 LOAD_IMAGE=minikube INSTALL_KUBERAY=false ./scripts/deploy.sh
@@ -339,11 +353,11 @@ INSTALL_KUBERAY=false ./scripts/deploy.sh
   - `target_ongoing_requests: 1`
   - `max_ongoing_requests: 1` (1 request/replica/luot — chua bat batching)
   - `min_replicas: 1`
-  - `max_replicas: 4`
+  - `max_replicas: 3`
 - Ray cluster scale worker pods khi Serve can them CPU:
   - worker group `minReplicas: 1`
-  - `maxReplicas: 4`
-  - moi model replica dung `num_cpus: 2`
+  - `maxReplicas: 3`
+  - moi model replica dung `num_cpus: 3`
 
 Test tai dong thoi (load_test moi co warmup, p99, throughput, replica distribution, JSON output):
 
@@ -364,6 +378,7 @@ Sua env trong `k8s/rayservice.yaml`:
 
 - `MODEL_ID`: model Hugging Face compatible causal LM.
 - `MODEL_DTYPE`: `bfloat16` (mac dinh, nhanh tren CPU x86 moi) | `float32` | `float16`.
+- `ENABLE_THINKING`: `false` de tat thinking mode cua Qwen3.
 - `MAX_NEW_TOKENS`: gioi han token sinh ra mac dinh.
 - `MAX_INPUT_TOKENS`: gioi han do dai prompt truoc khi truncate.
 - `TORCH_NUM_THREADS`: so CPU thread moi replica dung.

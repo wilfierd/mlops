@@ -23,7 +23,7 @@ class ChatRequest(BaseModel):
     messages: list[Message] = Field(min_length=1)
     max_new_tokens: int | None = Field(default=None, ge=1, le=512)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    top_p: float = Field(default=0.9, ge=0.1, le=1.0)
+    top_p: float = Field(default=0.8, ge=0.1, le=1.0)
 
 
 class ChatResponse(BaseModel):
@@ -44,6 +44,13 @@ def _env_float(name: str, default: float) -> float:
     if not raw:
         return default
     return float(raw)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.lower() in {"1", "true", "yes", "on"}
 
 
 def _env_dtype(name: str, default: str) -> torch.dtype:
@@ -325,9 +332,10 @@ def _chat_html(model_id: str) -> str:
 @serve.ingress(api)
 class ChatModel:
     def __init__(self) -> None:
-        self.model_id = os.getenv("MODEL_ID", "HuggingFaceTB/SmolLM2-135M-Instruct")
+        self.model_id = os.getenv("MODEL_ID", "Qwen/Qwen3-0.6B")
         self.max_input_tokens = _env_int("MAX_INPUT_TOKENS", 2048)
         self.default_max_new_tokens = _env_int("MAX_NEW_TOKENS", 160)
+        self.enable_thinking = _env_bool("ENABLE_THINKING", False)
         self.replica = f"{os.uname().nodename}:{os.getpid()}"
 
         torch.set_num_threads(_env_int("TORCH_NUM_THREADS", max(1, os.cpu_count() or 1)))
@@ -369,11 +377,19 @@ class ChatModel:
         normalized = [message.model_dump() for message in messages]
         chat_template = getattr(self.tokenizer, "chat_template", None)
         if chat_template:
-            return self.tokenizer.apply_chat_template(
-                normalized,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
+            try:
+                return self.tokenizer.apply_chat_template(
+                    normalized,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=self.enable_thinking,
+                )
+            except TypeError:
+                return self.tokenizer.apply_chat_template(
+                    normalized,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
 
         lines = []
         for message in normalized:
@@ -422,6 +438,9 @@ class ChatModel:
         prompt_tokens = inputs["input_ids"].shape[-1]
         generated_ids = output_ids[0][prompt_tokens:]
         text = self.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+        stripped = text.lstrip()
+        if not self.enable_thinking and stripped.startswith("<think>") and "</think>" in stripped:
+            text = stripped.split("</think>", 1)[1].strip()
         return text or "(empty response)"
 
 

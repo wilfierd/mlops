@@ -42,7 +42,7 @@ variable "eks_version" {
 
 variable "node_instance_types" {
   type    = list(string)
-  default = ["t3.xlarge"]
+  default = ["m7g.xlarge"]
 }
 
 variable "node_capacity_type" {
@@ -72,7 +72,7 @@ variable "image_tag" {
 
 variable "model_id" {
   type    = string
-  default = "HuggingFaceTB/SmolLM2-135M-Instruct"
+  default = "Qwen/Qwen3-0.6B"
 }
 
 variable "ray_replica_max" {

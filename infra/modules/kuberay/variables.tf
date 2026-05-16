@@ -93,10 +93,10 @@ variable "worker_cpu_limit" {
 
 variable "worker_memory_request" {
   type    = string
-  default = "3Gi"
+  default = "4Gi"
 }
 
 variable "worker_memory_limit" {
   type    = string
-  default = "5Gi"
+  default = "6Gi"
 }

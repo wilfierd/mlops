@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="${ROOT_DIR}/k8s/rayservice.yaml"
 
 IMAGE="${IMAGE:-llm-chat-ray:0.1.0}"
-MODEL_ID="${MODEL_ID:-HuggingFaceTB/SmolLM2-135M-Instruct}"
+MODEL_ID="${MODEL_ID:-Qwen/Qwen3-0.6B}"
 NAMESPACE="${NAMESPACE:-llm-chat}"
 KUBERAY_NAMESPACE="${KUBERAY_NAMESPACE:-kuberay-system}"
 INSTALL_KUBERAY="${INSTALL_KUBERAY:-auto}"
@@ -18,7 +18,7 @@ MINIKUBE_PROFILE="${MINIKUBE_PROFILE:-llm-chat}"
 DOCKER_CMD="${DOCKER_CMD:-}"
 
 DEFAULT_IMAGE="llm-chat-ray:0.1.0"
-DEFAULT_MODEL_ID="HuggingFaceTB/SmolLM2-135M-Instruct"
+DEFAULT_MODEL_ID="Qwen/Qwen3-0.6B"
 
 log() {
   printf '[deploy] %s\n' "$*"

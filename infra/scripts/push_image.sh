@@ -11,6 +11,7 @@ ENV_DIR="${INFRA_DIR}/environments/${ENV}"
 IMAGE_TAG="${IMAGE_TAG:-}"
 PRELOAD_MODEL="${PRELOAD_MODEL:-true}"
 DOCKER_CMD="${DOCKER_CMD:-docker}"
+IMAGE_PLATFORM="${IMAGE_PLATFORM:-}"
 
 log() { printf '[push] %s\n' "$*"; }
 
@@ -44,15 +45,31 @@ main() {
   aws ecr get-login-password --region "${region}" \
     | "${DOCKER_CMD}" login --username AWS --password-stdin "${registry}"
 
-  log "build ${repo}:${tag} (PRELOAD_MODEL=${PRELOAD_MODEL})"
-  "${DOCKER_CMD}" build \
-    --build-arg "MODEL_ID=${model}" \
-    --build-arg "PRELOAD_MODEL=${PRELOAD_MODEL}" \
-    -t "${repo}:${tag}" \
-    "${ROOT_DIR}"
+  if [[ -n "${IMAGE_PLATFORM}" && "${DOCKER_CMD}" == "docker" ]]; then
+    log "buildx build ${repo}:${tag} platform=${IMAGE_PLATFORM} (PRELOAD_MODEL=${PRELOAD_MODEL})"
+    docker buildx build \
+      --platform "${IMAGE_PLATFORM}" \
+      --build-arg "MODEL_ID=${model}" \
+      --build-arg "PRELOAD_MODEL=${PRELOAD_MODEL}" \
+      -t "${repo}:${tag}" \
+      --push \
+      "${ROOT_DIR}"
+  else
+    log "build ${repo}:${tag} platform=${IMAGE_PLATFORM:-native} (PRELOAD_MODEL=${PRELOAD_MODEL})"
+    local platform_args=()
+    if [[ -n "${IMAGE_PLATFORM}" ]]; then
+      platform_args=(--platform "${IMAGE_PLATFORM}")
+    fi
+    "${DOCKER_CMD}" build \
+      "${platform_args[@]}" \
+      --build-arg "MODEL_ID=${model}" \
+      --build-arg "PRELOAD_MODEL=${PRELOAD_MODEL}" \
+      -t "${repo}:${tag}" \
+      "${ROOT_DIR}"
 
-  log "push ${repo}:${tag}"
-  "${DOCKER_CMD}" push "${repo}:${tag}"
+    log "push ${repo}:${tag}"
+    "${DOCKER_CMD}" push "${repo}:${tag}"
+  fi
 
   log "rolling pods to pick up new image"
   kubectl -n llm-chat delete pod --all --grace-period=0 --force 2>/dev/null || true

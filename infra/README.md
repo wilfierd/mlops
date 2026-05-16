@@ -42,7 +42,7 @@ terraform init && terraform apply
 - AWS account + admin-ish creds (`aws sts get-caller-identity` works).
 - Tools: `terraform >= 1.6`, `aws` v2, `kubectl >= 1.30`, `docker` or `podman`.
 - Quota in the target region: 1 EKS cluster, 1 NAT gateway, 1 EIP, 2..4
-  `t3.xlarge` instances.
+  `m7g.xlarge` instances, or the x86/ARM instance type you choose.
 
 ## Deploy
 
@@ -74,9 +74,9 @@ The cluster comes up with `ImagePullBackOff` until you push the app image to
 ECR (the ECR repo is created empty by Terraform).
 
 ```bash
-infra/scripts/push_image.sh                   # ENV=dev default
+IMAGE_PLATFORM=linux/arm64 infra/scripts/push_image.sh  # ENV=dev default for Graviton
 # or for another env:
-ENV=staging infra/scripts/push_image.sh
+ENV=staging IMAGE_PLATFORM=linux/arm64 infra/scripts/push_image.sh
 ```
 
 The script:
@@ -84,9 +84,9 @@ The script:
 1. Reads `region`, `ecr_repository_url`, `model_id`, `image_tag` from
    `terraform output` of `environments/${ENV}/`.
 2. `docker login` to ECR.
-3. `docker build` with `PRELOAD_MODEL=true` (bakes the HF model into the
-   image, so pods don't depend on Hugging Face Hub egress at start time).
-4. `docker push`.
+3. `docker buildx build --platform linux/arm64 --push` when `IMAGE_PLATFORM`
+   is set, with `PRELOAD_MODEL=true` by default.
+4. Pushes the image to ECR.
 5. `kubectl delete pod --all --force` to roll the RayService onto the new
    image.
 
@@ -115,7 +115,7 @@ tag without re-applying TF just push the same tag and run the script.
 | Item | $/month (on-demand) |
 | --- | --- |
 | EKS control plane | $73 |
-| 2 × t3.xlarge | ~$240 |
+| 2 × m7g.xlarge | region-dependent |
 | NAT GW + traffic | $33 + data |
 | ECR | ~$1 |
 | **Total** | **~$350-400** |
@@ -137,17 +137,19 @@ terraform destroy
 
 | Variable | Effect |
 | --- | --- |
-| `node_instance_types` | Default `t3.xlarge` (cheap, burstable). For load tests use `m6i.2xlarge` or `c6i.2xlarge`. |
+| `node_instance_types` | Default `m7g.xlarge` for cheap Graviton ARM CPU. Use `m7g.2xlarge` for steadier concurrent tests, or `m6i.xlarge/m6i.2xlarge` if you want x86 image builds. |
 | `node_capacity_type` | `ON_DEMAND` default; `SPOT` cuts ~70%. |
 | `node_min_size` / `_desired` / `_max` | MNG autoscale bounds. |
 | `ray_replica_max` | Ray Serve max replicas. |
 | `ray_replica_cpus` | CPU each Ray Serve replica reserves. |
-| `model_id` | HF model. Pair with bigger nodes for >1B parameter models. |
+| `model_id` | Default `Qwen/Qwen3-0.6B` with thinking disabled in the app. |
 
 ## Notes
 
-- `t3.xlarge` is **burstable**. Sustained load test will burn CPU credits and
-  throttle. Switch to `m6i.2xlarge`/`c6i.2xlarge` for real benchmarks.
+- Graviton nodes need an ARM64 or multi-arch image. Build/push with
+  `IMAGE_PLATFORM=linux/arm64 PRELOAD_MODEL=true ./infra/scripts/push_image.sh`.
+- `t3/t3a` are **burstable**. Sustained load tests burn CPU credits and can
+  throttle, so avoid them for model latency benchmarks.
 - Workers are in a single AZ to keep cost low. For production set
   `node_subnet_ids` (in `modules/eks/main.tf`) to all private subnets and
   remove `single_nat_gateway` in `modules/network/main.tf`.

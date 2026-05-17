@@ -8,6 +8,19 @@ The RayService manifest is applied with `kubectl_manifest` (from
 does not require API access at plan time, so a fresh `terraform apply` against
 a brand-new EKS cluster works in one shot.
 
+## File layout
+
+Terraform loads every `*.tf` in this directory, so the split is purely for
+readability — not a runtime concern.
+
+| File | What's in it |
+| --- | --- |
+| `main.tf` | Namespace + `helm_release.kuberay_operator` |
+| `locals.tf` | `local.common_env` + `local.rayservice` (manifest body) |
+| `rayservice.tf` | `kubectl_manifest.rayservice` that applies the CR |
+| `pdb.tf` | PodDisruptionBudget for head + worker |
+| `variables.tf`, `outputs.tf`, `versions.tf` | as usual |
+
 ## Inputs
 
 | Name | Type | Default | Description |

@@ -16,7 +16,7 @@
 1. **State backend** vẫn local — phải S3 + DynamoDB lock để demo team-collaboration.
 2. **Không có CI/CD pipeline** — deploy manual = mất điểm DevOps nặng nhất.
 3. **Zero observability** — Prometheus + Grafana là baseline expected.
-4. **Reliability primitives thiếu**: PDB, readiness probe, terminationGracePeriod.
+4. **Reliability primitives thiếu**: PDB + readiness probe (graceful shutdown đã có sẵn `terminationGracePeriodSeconds: 60`).
 5. **Cost visibility yếu** — chưa có tag breakdown, không có alerting budget.
 6. **Documentation thiếu**: runbook, ADR, architecture diagram chính thức.
 
@@ -110,6 +110,7 @@ resource "aws_dynamodb_table" "tflock" {
 }
 
 data "aws_caller_identity" "this" {}
+data "aws_region" "this" {}
 
 output "backend_config" {
   value = <<EOT
@@ -185,8 +186,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.11' }
-      - run: pip install -r requirements.txt pytest
-      - run: pytest -q || true  # cho phép pass nếu chưa có test
+      # Light-weight: only check syntax + load_test imports.
+      # Add `pytest` here AFTER you write real tests under tests/ —
+      # never `pytest || true` (silently passing is worse than no test).
+      - run: |
+          python -m py_compile app/server.py scripts/load_test.py
+          pip install httpx
+          python scripts/load_test.py --help >/dev/null
 
   build-and-push:
     needs: [tf-check, app-test]
@@ -269,11 +275,25 @@ resource "aws_iam_role" "gh_deploy" {
 }
 
 resource "aws_iam_role_policy_attachment" "gh_deploy" {
-  # Restrict to least-privilege in real prod. Lab OK với AdministratorAccess.
+  # ⚠️ DEMO-ONLY: AdministratorAccess violates least-privilege but keeps the
+  # lab moving. TODO before any real environment:
+  #   1. Replace with a custom policy scoped to the exact actions this stack
+  #      needs: ec2:* (VPC/subnets/SG/EIP/NAT), eks:*, ecr:* on the lab repo,
+  #      iam: limited to PassRole/CreateRole on the EKS+node roles only,
+  #      s3:* + dynamodb:* on the tfstate bucket and lock table only,
+  #      budgets:* + logs:*, helm-released CRDs as needed.
+  #   2. Generate via `iam-policy-generator` from a real apply trace, then
+  #      tighten further.
+  # This is acceptable for a *training lab*; flag the TODO during review.
   role       = aws_iam_role.gh_deploy.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
 ```
+
+> ⚠️ The IAM role above intentionally uses `AdministratorAccess` for lab
+> speed. For any non-lab usage, replace with the least-privilege custom
+> policy described in the inline TODO. Mention this explicitly to the
+> reviewer so it isn't read as oversight.
 
 → Reviewer thấy: OIDC trust (không dùng long-lived AWS keys), multi-stage pipeline (lint → test → build → apply), GHA cache cho image build.
 
@@ -314,25 +334,37 @@ resource "helm_release" "kube_prom_stack" {
   set { name = "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues" value = "false" }
 }
 
-# ServiceMonitor scrape Ray Serve metrics endpoint
+# ServiceMonitor scrape Ray metrics endpoint (head pod, port 8080).
+# IMPORTANT: ServiceMonitor matches on K8s Services, not Pods. KubeRay tạo
+# automatic 2 Service: <name>-head-svc (head ports) + <name>-serve-svc
+# (Serve HTTP 8000). Service `<name>-head-svc` đã expose port 8080 với
+# `name: metrics` từ KubeRay v1.6+.
+#
+# Validate trước khi apply:
+#   kubectl -n llm-chat get svc llm-chat-dev-head-svc -o yaml | grep -A2 ports:
+# Đảm bảo có port `name: metrics` trên 8080. Nếu KubeRay version cũ hơn
+# (<1.6), port có thể không named -> dùng `targetPort: 8080` thay vì `port: metrics`.
 resource "kubernetes_manifest" "ray_service_monitor" {
   manifest = {
     apiVersion = "monitoring.coreos.com/v1"
     kind       = "ServiceMonitor"
     metadata = {
-      name      = "ray-serve"
+      name      = "ray-head-metrics"
       namespace = kubernetes_namespace.monitoring.metadata[0].name
+      labels    = { release = "kube-prom-stack" }
     }
     spec = {
       namespaceSelector = { matchNames = ["llm-chat"] }
       selector = {
-        matchExpressions = [{
-          key      = "ray.io/cluster"
-          operator = "Exists"
-        }]
+        # Match Service `<name>-head-svc` qua label ray.io/node-type=head
+        # mà KubeRay set lên Service. Validate label trước apply:
+        #   kubectl -n llm-chat get svc --show-labels
+        matchLabels = {
+          "ray.io/node-type" = "head"
+        }
       }
       endpoints = [{
-        port     = "metrics"   # ray head expose 8080
+        port     = "metrics"   # head-svc named port (KubeRay >=1.6)
         path     = "/metrics"
         interval = "15s"
       }]
@@ -340,6 +372,17 @@ resource "kubernetes_manifest" "ray_service_monitor" {
   }
 }
 ```
+
+> ⚠️ **Validate trước khi apply**:
+> 1. `kubectl -n llm-chat get svc --show-labels` — confirm Service nào có
+>    label `ray.io/node-type=head` (selector ServiceMonitor match).
+> 2. `kubectl -n llm-chat get svc <head-svc> -o yaml | grep -A3 ports:` —
+>    confirm có port `name: metrics` trên 8080. KubeRay <1.6 không tự
+>    thêm port này — phải declare trong head container `ports:` của
+>    manifest hoặc thay `port: "metrics"` bằng số `8080`.
+> 3. Sau apply, vào Prometheus UI (`/targets`) — confirm scrape target
+>    `kubernetes-service-endpoints` lên UP. Nếu DOWN → check selector +
+>    port name. Đây là điểm fail phổ biến nhất khi setup observability.
 
 **Grafana dashboard preset**: Ray Serve có sẵn dashboard mã `17721` trên grafana.com. Auto-provision:
 
@@ -424,7 +467,9 @@ containers = [{
   ...
   readinessProbe = {
     httpGet = {
-      path = "/health"
+      # Ray Serve proxy lifecycle endpoint. Returns 200 only when the
+      # local proxy + at least one healthy ChatModel replica are bound.
+      path = "/-/healthz"
       port = 8000
     }
     initialDelaySeconds = 30
@@ -434,6 +479,18 @@ containers = [{
   }
 }]
 ```
+
+> ⚠️ **Validate trước khi apply**: probe path/port phụ thuộc vào
+> `proxy_location` trong `serveConfigV2`.
+> - `proxy_location: EveryNode` (default) → mỗi pod (head + worker) đều có
+>   Serve proxy nghe `:8000` → `/-/healthz` trên worker hoạt động.
+> - `proxy_location: HeadOnly` → workers KHÔNG bind `:8000` → probe sẽ
+>   fail → pod NotReady dù Ray actor vẫn chạy bình thường.
+>
+> Nếu set HeadOnly để tiết kiệm CPU (xem 2.2), CHỈ probe head, không probe
+> worker — hoặc dùng `tcpSocket` trên port raylet (`10001`) làm proxy cho
+> liveness. Trước khi apply prod, `kubectl exec` vào pod thực tế và
+> `curl localhost:8000/-/healthz` để xác nhận.
 
 **Graceful shutdown** đã có `terminationGracePeriodSeconds = 60` ✅.
 

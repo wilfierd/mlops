@@ -1,29 +1,50 @@
-# Python
+# --- Python ---
 __pycache__/
 *.py[cod]
+*$py.class
+*.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .venv/
 venv/
+ENV/
+env/
+.python-version
+dist/
+build/
 
-# Runtime and local reports
+# --- Runtime + local reports ---
 reports/
 *.log
+*.pid
 
-# Docker / local env
+# --- Local env / secrets ---
 .env
 .env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.cert
+*.p12
+*.pfx
+.aws/
+kubeconfig
+kubeconfig.*
+*.kubeconfig
 
-# Terraform
+# --- Terraform ---
 .terraform/
 .terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 *.tfplan
+*.tfplan.*
 crash.log
 crash.*.log
 terraform.tfvars
+*.auto.tfvars
 override.tf
 override.tf.json
 *_override.tf
@@ -31,8 +52,44 @@ override.tf.json
 .terraformrc
 terraform.rc
 
-# Local agent/editor state
-.claude/settings.local.json
+# --- backend.tf is per-environment, contains account-specific bucket name ---
+infra/environments/*/backend.tf
+!infra/environments/*/backend.tf.example
 
-# Git metadata fallback for this sandbox
+# --- Container build artifacts ---
+*.tar
+*.tar.gz
+*.tgz
+
+# --- Editors ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*~
+.project
+.classpath
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Node (in case UI is added later) ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Local agent/editor state ---
+.claude/settings.local.json
+.cursorrules
+.aider*
+
+# --- Sandbox-specific (this dev machine) ---
 .git-local/
+
+# --- Hugging Face cache when running app locally ---
+.cache/
+huggingface/

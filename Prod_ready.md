@@ -403,7 +403,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::028708951757:role/gh-actions-deploy
+          role-to-assume: arn:aws:iam::<AWS_ACCOUNT_ID>:role/gh-actions-deploy
           aws-region: us-west-2
       - uses: aws-actions/amazon-ecr-login@v2
         id: ecr

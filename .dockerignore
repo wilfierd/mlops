@@ -1,0 +1,60 @@
+# Reduce build context size + avoid leaking secrets into image layers.
+# Anything not needed at runtime should be listed here.
+
+# --- VCS ---
+.git/
+.gitignore
+.git-local/
+.github/
+
+# --- IaC (not needed inside container) ---
+infra/
+*.tf
+*.tfstate
+*.tfstate.*
+*.tfplan
+
+# --- Local dev / IDE ---
+.venv/
+venv/
+ENV/
+env/
+.python-version
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Caches ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+huggingface/
+
+# --- Reports + logs ---
+reports/
+*.log
+
+# --- Local env / secrets ---
+.env
+.env.*
+*.pem
+*.key
+*.crt
+.aws/
+kubeconfig*
+
+# --- Docs (not needed at runtime) ---
+*.md
+docs/
+
+# --- Container artifacts ---
+Dockerfile
+.dockerignore
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db

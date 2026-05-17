@@ -1,0 +1,236 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "tags": ["llm", "chat", "app"],
+  "time": {"from": "now-30m", "to": "now"},
+  "refresh": "5s",
+  "title": "LLM Chat — Application",
+  "uid": "llm-chat-app",
+  "templating": {
+    "list": [
+      {
+        "name": "app",
+        "type": "constant",
+        "current": {"text": "llm-chat-dev", "value": "llm-chat-dev"},
+        "hide": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "RPS — /chat",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=\"$app\", route=\"/chat\"}[1m]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2}}
+    },
+    {
+      "id": 2,
+      "title": "p50 /chat",
+      "type": "stat",
+      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=\"$app\", route=\"/chat\"}[5m])) by (le)) / 1000",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 2}}
+    },
+    {
+      "id": 3,
+      "title": "p95 /chat",
+      "type": "stat",
+      "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=\"$app\", route=\"/chat\"}[5m])) by (le)) / 1000",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 2},
+              {"color": "red", "value": 5}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "p99 /chat",
+      "type": "stat",
+      "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket{application=\"$app\", route=\"/chat\"}[5m])) by (le)) / 1000",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 2}}
+    },
+    {
+      "id": 5,
+      "title": "Error rate %",
+      "type": "stat",
+      "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "100 * sum(rate(ray_serve_num_http_error_requests_total{application=\"$app\", route=\"/chat\"}[5m])) / clamp_min(sum(rate(ray_serve_num_router_requests_total{application=\"$app\", route=\"/chat\"}[5m])), 1)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 5}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Token throughput (≈ RPS × 64)",
+      "type": "stat",
+      "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "64 * sum(rate(ray_serve_num_router_requests_total{application=\"$app\", route=\"/chat\"}[1m]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 1}},
+      "description": "Upper bound assuming each request generates max_new_tokens. Replace with custom app counter for true tokens/sec."
+    },
+    {
+      "id": 7,
+      "title": "Request rate per route",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=\"$app\"}[1m])) by (route)",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "id": 8,
+      "title": "Latency p50 / p95 / p99 — /chat",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=\"$app\", route=\"/chat\"}[2m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=\"$app\", route=\"/chat\"}[2m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket{application=\"$app\", route=\"/chat\"}[2m])) by (le))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms"}}
+    },
+    {
+      "id": 9,
+      "title": "Requests distribution across replicas (last 5m)",
+      "type": "barchart",
+      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(increase(ray_serve_deployment_request_counter_total{application=\"$app\"}[5m])) by (replica)",
+          "legendFormat": "{{replica}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Hot replica? Even distribution? Check load balance."
+    },
+    {
+      "id": 10,
+      "title": "HTTP status code split",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=\"$app\"}[1m])) by (status_code)",
+          "legendFormat": "{{status_code}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "id": 11,
+      "title": "Deployment processing latency p95 (model.generate only)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 20, "w": 12, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_deployment_processing_latency_ms_bucket{application=\"$app\"}[2m])) by (le, deployment))",
+          "legendFormat": "{{deployment}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms"}},
+      "description": "HTTP latency includes proxy + serialization. This isolates pure inference latency inside the actor."
+    },
+    {
+      "id": 12,
+      "title": "Health probe success",
+      "type": "stat",
+      "gridPos": {"x": 12, "y": 20, "w": 12, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=\"$app\", route=~\"/health|/-/healthz\"}[1m]))",
+          "legendFormat": "health rps",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2}},
+      "description": "K8s readinessProbe traffic. Non-zero confirms probes are firing."
+    }
+  ]
+}

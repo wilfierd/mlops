@@ -96,11 +96,13 @@ resource "kubectl_manifest" "ray_service_monitor" {
   depends_on = [helm_release.kube_prom_stack]
 }
 
-# Provision a default Ray Serve dashboard as a ConfigMap. The Grafana sidecar
-# auto-imports any ConfigMap with label grafana_dashboard=1.
+# Two dashboards, each in its own ConfigMap so they show as separate entries
+# in Grafana. Sidecar auto-imports any ConfigMap with label grafana_dashboard=1.
+
+# Ray cluster system dashboard — replicas, queue, Ray node CPU/mem.
 resource "kubernetes_config_map" "ray_dashboard" {
   metadata {
-    name      = "ray-serve-dashboard"
+    name      = "grafana-dashboard-ray-cluster-ops"
     namespace = kubernetes_namespace.monitoring.metadata[0].name
     labels = {
       grafana_dashboard = "1"
@@ -108,7 +110,25 @@ resource "kubernetes_config_map" "ray_dashboard" {
   }
 
   data = {
-    "ray-serve.json" = file("${path.module}/dashboards/ray-serve.json")
+    "ray-cluster-ops.json" = file("${path.module}/dashboards/ray-serve.json")
+  }
+
+  depends_on = [helm_release.kube_prom_stack]
+}
+
+# LLM Chat application dashboard — /chat RPS, latency, errors, token throughput,
+# request distribution across replicas.
+resource "kubernetes_config_map" "app_dashboard" {
+  metadata {
+    name      = "grafana-dashboard-llm-chat-app"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+    labels = {
+      grafana_dashboard = "1"
+    }
+  }
+
+  data = {
+    "llm-chat-app.json" = file("${path.module}/dashboards/llm-chat-app.json")
   }
 
   depends_on = [helm_release.kube_prom_stack]

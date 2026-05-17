@@ -3,144 +3,189 @@
   "editable": true,
   "graphTooltip": 1,
   "schemaVersion": 39,
-  "tags": ["ray", "serve", "llm"],
+  "tags": ["ray", "system"],
   "time": {"from": "now-30m", "to": "now"},
-  "refresh": "15s",
-  "title": "Ray Serve — LLM Chat",
-  "uid": "ray-serve-llm",
+  "refresh": "10s",
+  "title": "Ray Cluster — Operations",
+  "uid": "ray-cluster-ops",
+  "templating": {
+    "list": [
+      {
+        "name": "app",
+        "type": "constant",
+        "current": {"text": "llm-chat-dev", "value": "llm-chat-dev"},
+        "hide": 2
+      }
+    ]
+  },
   "panels": [
     {
       "id": 1,
-      "title": "Active Serve Replicas",
+      "title": "Running replicas",
       "type": "stat",
-      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(ray_serve_num_deployment_replicas_healthy{application=\"llm-chat\"})",
-          "legendFormat": "healthy",
+          "expr": "count(ray_serve_replica_processing_queries{application=\"$app\"})",
+          "legendFormat": "running",
           "refId": "A"
         }
       ],
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "reduceOptions": {"calcs": ["lastNotNull"]}
-      }
+      "options": {"colorMode": "value", "graphMode": "area"}
     },
     {
       "id": 2,
-      "title": "Request Rate (req/s)",
-      "type": "timeseries",
-      "gridPos": {"x": 6, "y": 0, "w": 9, "h": 8},
+      "title": "Target replicas (autoscaler)",
+      "type": "stat",
+      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_http_requests_total[1m])) by (route)",
-          "legendFormat": "{{route}}",
+          "expr": "max(ray_serve_deployment_replicas_target{application=\"$app\"})",
+          "legendFormat": "target",
           "refId": "A"
         }
       ]
     },
     {
       "id": 3,
-      "title": "Ongoing Requests per Replica",
-      "type": "timeseries",
-      "gridPos": {"x": 15, "y": 0, "w": 9, "h": 8},
+      "title": "Ray nodes",
+      "type": "stat",
+      "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "ray_serve_num_ongoing_http_requests{application=\"llm-chat\"}",
-          "legendFormat": "{{deployment}}",
+          "expr": "count(ray_node_cpu_utilization)",
+          "legendFormat": "nodes",
           "refId": "A"
         }
       ]
     },
     {
       "id": 4,
-      "title": "P50 Latency (s)",
+      "title": "Total Ray actors (alive)",
       "type": "stat",
-      "gridPos": {"x": 0, "y": 4, "w": 6, "h": 4},
+      "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket[5m])) by (le)) / 1000",
+          "expr": "sum(ray_actors{State=\"ALIVE\"})",
+          "legendFormat": "alive",
           "refId": "A"
         }
-      ],
-      "fieldConfig": {
-        "defaults": {"unit": "s", "decimals": 2}
-      }
+      ]
     },
     {
       "id": 5,
-      "title": "Latency Percentiles (ms)",
+      "title": "Replica count over time",
+      "type": "timeseries",
+      "gridPos": {"x": 16, "y": 0, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "count(ray_serve_replica_processing_queries{application=\"$app\"}) by (deployment)",
+          "legendFormat": "{{deployment}} running",
+          "refId": "A"
+        },
+        {
+          "expr": "max(ray_serve_deployment_replicas_target{application=\"$app\"}) by (deployment)",
+          "legendFormat": "{{deployment}} target",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}},
+      "description": "Running vs target. Gap during scale-up = pods being spawned."
+    },
+    {
+      "id": 6,
+      "title": "Ongoing requests per replica",
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket[5m])) by (le))",
-          "legendFormat": "p50",
+          "expr": "ray_serve_replica_processing_queries{application=\"$app\"}",
+          "legendFormat": "{{replica}}",
           "refId": "A"
-        },
-        {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket[5m])) by (le))",
-          "legendFormat": "p95",
-          "refId": "B"
-        },
-        {
-          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket[5m])) by (le))",
-          "legendFormat": "p99",
-          "refId": "C"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "ms"}}
+      "description": "When this hits max_ongoing_requests=1 sustained, autoscaler scales out."
     },
     {
-      "id": 6,
-      "title": "Error Rate (%)",
+      "id": 7,
+      "title": "Pending (queued) per replica",
       "type": "timeseries",
       "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "100 * sum(rate(ray_serve_num_http_error_requests_total[5m])) / sum(rate(ray_serve_num_http_requests_total[5m]))",
-          "legendFormat": "% errors",
+          "expr": "ray_serve_replica_pending_queries{application=\"$app\"}",
+          "legendFormat": "{{replica}}",
           "refId": "A"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "percent"}}
+      "description": "Pending > 0 means proxy queued requests at this replica."
     },
     {
-      "id": 7,
-      "title": "CPU per Ray Pod (cores)",
+      "id": 8,
+      "title": "Ray node CPU utilization (%)",
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"llm-chat\", container!=\"\"}[2m])) by (pod)",
-          "legendFormat": "{{pod}}",
+          "expr": "ray_node_cpu_utilization",
+          "legendFormat": "{{NodeAddress}}",
           "refId": "A"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "short", "decimals": 2}}
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}}
     },
     {
-      "id": 8,
-      "title": "Memory per Ray Pod (MiB)",
+      "id": 9,
+      "title": "Ray node memory used (GiB)",
       "type": "timeseries",
       "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(container_memory_working_set_bytes{namespace=\"llm-chat\", container!=\"\"}) by (pod) / 1024 / 1024",
-          "legendFormat": "{{pod}}",
+          "expr": "ray_node_mem_used / 1024 / 1024 / 1024",
+          "legendFormat": "{{NodeAddress}}",
           "refId": "A"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "MiB"}}
+      "fieldConfig": {"defaults": {"unit": "decgbytes", "decimals": 2}}
+    },
+    {
+      "id": 10,
+      "title": "Replica spawns (events)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 24, "w": 12, "h": 6},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(increase(ray_serve_num_replica_starts_total{application=\"$app\"}[5m])) by (deployment)",
+          "legendFormat": "{{deployment}} starts",
+          "refId": "A"
+        }
+      ],
+      "description": "Spikes = replica spawned. Frequent spikes during steady traffic = crashloop."
+    },
+    {
+      "id": 11,
+      "title": "Total router requests handled",
+      "type": "stat",
+      "gridPos": {"x": 12, "y": 24, "w": 12, "h": 6},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(ray_serve_num_router_requests_total)",
+          "legendFormat": "total",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}}
     }
   ]
 }

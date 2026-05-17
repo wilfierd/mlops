@@ -71,10 +71,11 @@ module "kuberay" {
   gguf_repo_id      = var.gguf_repo_id
   gguf_filename     = var.gguf_filename
 
-  # Serve autoscale
-  min_replicas = var.ray_min_replicas
-  max_replicas = var.ray_replica_max
-  replica_cpus = var.ray_replica_cpus
+  # Serve autoscale (actor counts; pod count derived in kuberay module).
+  min_replicas   = var.ray_min_replicas
+  max_replicas   = var.ray_replica_max
+  replica_cpus   = var.ray_replica_cpus
+  actors_per_pod = var.ray_actors_per_pod
 
   depends_on = [module.eks]
 }

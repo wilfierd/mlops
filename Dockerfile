@@ -5,8 +5,8 @@ FROM rayproject/ray:${RAY_VERSION}-py311-cpu
 ARG MODEL_ID=Qwen/Qwen3-0.6B
 ARG PRELOAD_MODEL=false
 ARG INFERENCE_BACKEND=llamacpp
-ARG GGUF_REPO_ID=Qwen/Qwen3-0.6B-GGUF
-ARG GGUF_FILENAME=Qwen3-0.6B-Q4_K_M.gguf
+ARG GGUF_REPO_ID=bartowski/Qwen_Qwen3-0.6B-GGUF
+ARG GGUF_FILENAME=Qwen_Qwen3-0.6B-Q4_K_M.gguf
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/serve \
@@ -19,16 +19,28 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /serve
 
+# llama-cpp-python often falls back to source build on aarch64 because the
+# prebuilt manylinux wheel doesn't always match the base image's Python ABI.
+# Install gcc/g++/cmake as system packages so the fallback compile works.
+# Conda's compiler_compat shim ($CC=.../compiler_compat) is broken on aarch64
+# in the rayproject base image, so unset CC/CXX to let scikit-build-core
+# discover the system compiler.
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential cmake \
+ && rm -rf /var/lib/apt/lists/*
+USER ray
+ENV CC= CXX=
+
 COPY requirements.txt .
 
 # Install torch (CPU-only wheel) first so the resolver doesn't pull the 2GB
 # nvidia/CUDA wheels by accident.
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.7.1
 
-# llama-cpp-python wheel build on ARM under QEMU is slow (~10 min). The
-# upstream provides a manylinux2_28_aarch64 wheel for recent versions, so
-# pip should pick it up without compilation. If you bump the version and
-# notice a long build, pin to a version with prebuilt aarch64 wheels.
+# llama-cpp-python: prefer prebuilt wheel, fallback to source build (which
+# now works thanks to the build-essential install above). Build is ~5 min
+# on ARM via QEMU emulation.
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app

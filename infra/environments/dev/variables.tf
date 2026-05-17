@@ -101,13 +101,13 @@ variable "inference_backend" {
 variable "gguf_repo_id" {
   description = "HF repo with the GGUF file (llamacpp backend)"
   type        = string
-  default     = "Qwen/Qwen3-0.6B-GGUF"
+  default     = "bartowski/Qwen_Qwen3-0.6B-GGUF"
 }
 
 variable "gguf_filename" {
   description = "GGUF file name (llamacpp backend)"
   type        = string
-  default     = "Qwen3-0.6B-Q4_K_M.gguf"
+  default     = "Qwen_Qwen3-0.6B-Q4_K_M.gguf"
 }
 
 variable "ray_replica_max" {
@@ -122,7 +122,13 @@ variable "ray_replica_cpus" {
 }
 
 variable "ray_min_replicas" {
-  description = "Minimum Ray Serve replicas (2 for HA)"
+  description = "Minimum Ray Serve ACTOR count (2 for HA). NOT pod count."
+  type        = number
+  default     = 2
+}
+
+variable "ray_actors_per_pod" {
+  description = "How many Ray Serve actors fit into one worker pod. Used to translate actor count into K8s pod count."
   type        = number
   default     = 2
 }

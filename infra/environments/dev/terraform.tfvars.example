@@ -14,11 +14,14 @@ head_capacity_type  = "ON_DEMAND"
 
 # --- Worker MNG (model serving) ---
 # m7g.xlarge = 4 vCPU, 16 GiB, $117/month, Graviton3 sustained.
+# 1 worker pod per node (pod chiếm 3/4 CPU), 2 actors per pod.
+# desired=1 → 2 actors baseline trên 1 node ($117/month).
+# max=2 → khi cần 3+ actors, MNG scale lên 2 nodes (= 4 actors max).
 worker_instance_types = ["m7g.xlarge"]
 worker_capacity_type  = "ON_DEMAND"
 worker_min_size       = 1
 worker_desired_size   = 1
-worker_max_size       = 3
+worker_max_size       = 2
 
 # --- App ---
 image_tag = "0.1.0"
@@ -27,15 +30,19 @@ image_tag = "0.1.0"
 # Switch to "transformers" for bf16 fallback if a GGUF isn't available.
 inference_backend = "llamacpp"
 model_id          = "Qwen/Qwen3-0.6B"
-gguf_repo_id      = "Qwen/Qwen3-0.6B-GGUF"
-gguf_filename     = "Qwen3-0.6B-Q4_K_M.gguf"
+gguf_repo_id      = "bartowski/Qwen_Qwen3-0.6B-GGUF"
+gguf_filename     = "Qwen_Qwen3-0.6B-Q4_K_M.gguf"
 
 # --- Ray Serve scaling ---
-# 1.5 CPU per replica + Q4_K_M = ~1 second / 64 tokens. 2 replicas baseline
-# for HA + ability to absorb traffic spikes via autoscale up to 4.
-ray_replica_cpus = 1.5
-ray_min_replicas = 2
-ray_replica_max  = 4
+# IMPORTANT: ray_min/max_replicas = ACTOR count (Python instances), NOT pod count.
+# 1.5 CPU per actor + Q4_K_M = ~1 second / 64 tokens. 2 actors baseline = HA.
+# Up to 4 actors total: 2 fit in 1 worker pod, additional 2 require pod #2.
+ray_replica_cpus   = 1.5
+ray_min_replicas   = 2 # actor count
+ray_replica_max    = 4 # actor count
+ray_actors_per_pod = 2 # how Ray packs actors into one pod (3 CPU / 1.5 = 2)
+# → KubeRay needs floor(4/2)=2 worker PODS max, 1 worker pod baseline.
+# → worker MNG desired=1, max=2 is enough.
 
 # --- Cost guardrail ---
 monthly_budget_usd  = 100

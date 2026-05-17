@@ -10,6 +10,9 @@ ENV_DIR="${INFRA_DIR}/environments/${ENV}"
 
 IMAGE_TAG="${IMAGE_TAG:-}"
 PRELOAD_MODEL="${PRELOAD_MODEL:-true}"
+INFERENCE_BACKEND="${INFERENCE_BACKEND:-llamacpp}"
+GGUF_REPO_ID="${GGUF_REPO_ID:-bartowski/Qwen_Qwen3-0.6B-GGUF}"
+GGUF_FILENAME="${GGUF_FILENAME:-Qwen_Qwen3-0.6B-Q4_K_M.gguf}"
 DOCKER_CMD="${DOCKER_CMD:-docker}"
 IMAGE_PLATFORM="${IMAGE_PLATFORM:-}"
 
@@ -46,16 +49,19 @@ main() {
     | "${DOCKER_CMD}" login --username AWS --password-stdin "${registry}"
 
   if [[ -n "${IMAGE_PLATFORM}" && "${DOCKER_CMD}" == "docker" ]]; then
-    log "buildx build ${repo}:${tag} platform=${IMAGE_PLATFORM} (PRELOAD_MODEL=${PRELOAD_MODEL})"
+    log "buildx build ${repo}:${tag} platform=${IMAGE_PLATFORM} (PRELOAD_MODEL=${PRELOAD_MODEL} backend=${INFERENCE_BACKEND})"
     docker buildx build \
       --platform "${IMAGE_PLATFORM}" \
       --build-arg "MODEL_ID=${model}" \
       --build-arg "PRELOAD_MODEL=${PRELOAD_MODEL}" \
+      --build-arg "INFERENCE_BACKEND=${INFERENCE_BACKEND}" \
+      --build-arg "GGUF_REPO_ID=${GGUF_REPO_ID}" \
+      --build-arg "GGUF_FILENAME=${GGUF_FILENAME}" \
       -t "${repo}:${tag}" \
       --push \
       "${ROOT_DIR}"
   else
-    log "build ${repo}:${tag} platform=${IMAGE_PLATFORM:-native} (PRELOAD_MODEL=${PRELOAD_MODEL})"
+    log "build ${repo}:${tag} platform=${IMAGE_PLATFORM:-native} (PRELOAD_MODEL=${PRELOAD_MODEL} backend=${INFERENCE_BACKEND})"
     local platform_args=()
     if [[ -n "${IMAGE_PLATFORM}" ]]; then
       platform_args=(--platform "${IMAGE_PLATFORM}")
@@ -64,6 +70,9 @@ main() {
       "${platform_args[@]}" \
       --build-arg "MODEL_ID=${model}" \
       --build-arg "PRELOAD_MODEL=${PRELOAD_MODEL}" \
+      --build-arg "INFERENCE_BACKEND=${INFERENCE_BACKEND}" \
+      --build-arg "GGUF_REPO_ID=${GGUF_REPO_ID}" \
+      --build-arg "GGUF_FILENAME=${GGUF_FILENAME}" \
       -t "${repo}:${tag}" \
       "${ROOT_DIR}"
 

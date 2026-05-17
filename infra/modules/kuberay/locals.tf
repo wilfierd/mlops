@@ -6,6 +6,15 @@
 # CoreDNS — without it workers fail to connect to GCS during cold start.
 
 locals {
+  # KubeRay workerGroupSpec.minReplicas controls POD count (K8s pods),
+  # while Ray Serve autoscaling_config.min_replicas controls ACTOR count
+  # (Python instances). Multiple actors can pack into one pod, so the
+  # two are NOT the same number.
+  #
+  # Example: min_replicas=2 actors with actors_per_pod=2 -> need only 1 pod.
+  worker_pod_min = max(1, ceil(var.min_replicas / var.actors_per_pod))
+  worker_pod_max = max(1, ceil(var.max_replicas / var.actors_per_pod))
+
   common_env = [
     # Backend selection — llamacpp uses GGUF Q4_K_M, transformers uses bf16
     { name = "INFERENCE_BACKEND", value = var.inference_backend },
@@ -17,9 +26,12 @@ locals {
     { name = "GGUF_FILENAME", value = var.gguf_filename },
     { name = "LLAMA_N_CTX", value = tostring(var.llama_n_ctx) },
     { name = "LLAMA_N_BATCH", value = tostring(var.llama_n_batch) },
-    # Thread count = CPU budget the actor reserves in Ray.
-    { name = "LLAMA_N_THREADS", value = tostring(var.replica_cpus) },
-    { name = "TORCH_NUM_THREADS", value = tostring(var.replica_cpus) },
+    # Thread count must be INTEGER (llama.cpp + torch.set_num_threads).
+    # Ray `num_cpus` accepts fractional (1.5) but OS threads cannot — round UP
+    # so each actor uses 2 OS threads when reserved 1.5 Ray CPU. Kernel
+    # scheduler handles contention; total threads ≤ pod CPU limit.
+    { name = "LLAMA_N_THREADS", value = tostring(ceil(var.replica_cpus)) },
+    { name = "TORCH_NUM_THREADS", value = tostring(ceil(var.replica_cpus)) },
 
     # Shared
     { name = "ENABLE_THINKING", value = "false" },
@@ -116,10 +128,11 @@ locals {
                   requests = { cpu = var.head_cpu_request, memory = var.head_memory_request }
                   limits   = { cpu = var.head_cpu_limit, memory = var.head_memory_limit }
                 }
-                # Head exposes Serve HTTP proxy. Readiness gate on /-/healthz
-                # ensures the K8s service only routes to head when the proxy is up.
+                # RayService submits Serve only after the head pod is Ready.
+                # Do not probe Serve /-/healthz here, otherwise bootstrap
+                # deadlocks: Serve is not started until this probe passes.
                 readinessProbe = {
-                  httpGet             = { path = "/-/healthz", port = 8000 }
+                  httpGet             = { path = "/api/healthz", port = 52365 }
                   initialDelaySeconds = 20
                   periodSeconds       = 10
                   timeoutSeconds      = 5
@@ -133,9 +146,11 @@ locals {
         }
 
         workerGroupSpecs = [{
-          groupName      = "cpu-workers"
-          minReplicas    = var.min_replicas
-          maxReplicas    = var.max_replicas
+          groupName = "cpu-workers"
+          # ⚠️ minReplicas / maxReplicas here = POD count, NOT actor count.
+          # Ray packs `actors_per_pod` actors per worker pod (see locals).
+          minReplicas    = local.worker_pod_min
+          maxReplicas    = local.worker_pod_max
           rayStartParams = {}
           template = {
             spec = {
@@ -154,12 +169,10 @@ locals {
                   requests = { cpu = var.worker_cpu_request, memory = var.worker_memory_request }
                   limits   = { cpu = var.worker_cpu_limit, memory = var.worker_memory_limit }
                 }
-                # Worker hosts the ChatModel actor. /-/healthz on 8000 returns 200
-                # only when the Serve replica has loaded the model.
-                # Works because proxy_location=EveryNode places a proxy on every
-                # pod; switch to tcpSocket on raylet port if you flip to HeadOnly.
+                # Worker readiness should mean the Ray node joined the cluster.
+                # Serve app health is checked by RayService/Serve separately.
                 readinessProbe = {
-                  httpGet             = { path = "/-/healthz", port = 8000 }
+                  httpGet             = { path = "/api/healthz", port = 52365 }
                   initialDelaySeconds = 30
                   periodSeconds       = 10
                   timeoutSeconds      = 5

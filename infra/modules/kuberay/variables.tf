@@ -57,13 +57,13 @@ variable "inference_backend" {
 variable "gguf_repo_id" {
   description = "HF repo holding the GGUF file (llamacpp only)"
   type        = string
-  default     = "Qwen/Qwen3-0.6B-GGUF"
+  default     = "bartowski/Qwen_Qwen3-0.6B-GGUF"
 }
 
 variable "gguf_filename" {
   description = "GGUF file name inside gguf_repo_id (llamacpp only)"
   type        = string
-  default     = "Qwen3-0.6B-Q4_K_M.gguf"
+  default     = "Qwen_Qwen3-0.6B-Q4_K_M.gguf"
 }
 
 variable "llama_n_ctx" {
@@ -79,20 +79,31 @@ variable "llama_n_batch" {
 }
 
 variable "max_replicas" {
-  description = "Ray Serve max replicas"
+  description = "Ray Serve max ACTOR count (not pod count). Ray packs multiple actors per pod when possible."
   type        = number
-  default     = 3
+  default     = 4
 }
 
 variable "min_replicas" {
-  type    = number
-  default = 1
+  description = "Ray Serve min ACTOR count (HA baseline)"
+  type        = number
+  default     = 2
 }
 
 variable "replica_cpus" {
-  description = "CPU each Ray Serve replica reserves"
+  description = "CPU each Ray Serve actor reserves (Ray's num_cpus)"
   type        = number
-  default     = 3
+  default     = 1.5
+}
+
+variable "actors_per_pod" {
+  description = <<-EOT
+    How many Ray Serve actors fit into one worker pod.
+    Computed from worker_cpu_limit / replica_cpus (e.g. 3 / 1.5 = 2).
+    Used to translate actor min/max into pod min/max for KubeRay.
+  EOT
+  type        = number
+  default     = 2
 }
 
 variable "head_cpu_request" {

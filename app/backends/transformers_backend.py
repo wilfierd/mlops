@@ -16,8 +16,14 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 def _env_int(name: str, default: int) -> int:
+    """Tolerant int parse: accepts float strings like "1.5" by flooring."""
     raw = os.getenv(name)
-    return int(raw) if raw else default
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return int(float(raw))
 
 
 def _env_bool(name: str, default: bool) -> bool:

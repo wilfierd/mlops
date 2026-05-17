@@ -26,14 +26,30 @@ module "eks" {
   control_plane_subnet_ids = module.network.control_plane_subnet_ids
   node_subnet_ids          = module.network.worker_subnet_ids
 
+  # Two node groups so head + worker can have different instance classes.
+  # Head doesn't run model => burstable t4g.large is plenty + cheap.
+  # Worker runs Ray actors => sustained Graviton3 to avoid throttle.
   node_groups = {
-    cpu = {
-      instance_types = var.node_instance_types
-      capacity_type  = var.node_capacity_type
-      min_size       = var.node_min_size
-      desired_size   = var.node_desired_size
-      max_size       = var.node_max_size
-      labels         = { workload = "ray" }
+    head = {
+      instance_types = var.head_instance_types
+      capacity_type  = var.head_capacity_type
+      min_size       = 1
+      desired_size   = 1
+      max_size       = 1
+      labels         = { "ray.io/node-type" = "head" }
+      taints = [{
+        key    = "ray-role"
+        value  = "head"
+        effect = "NO_SCHEDULE"
+      }]
+    }
+    worker = {
+      instance_types = var.worker_instance_types
+      capacity_type  = var.worker_capacity_type
+      min_size       = var.worker_min_size
+      desired_size   = var.worker_desired_size
+      max_size       = var.worker_max_size
+      labels         = { "ray.io/node-type" = "worker" }
     }
   }
 
@@ -48,7 +64,15 @@ module "kuberay" {
   service_name = local.name_prefix
   namespace    = "llm-chat"
   image        = "${module.ecr.repository_url}:${var.image_tag}"
-  model_id     = var.model_id
+
+  # Backend wiring — defaults to llamacpp + Q4_K_M for fast CPU inference.
+  inference_backend = var.inference_backend
+  model_id          = var.model_id
+  gguf_repo_id      = var.gguf_repo_id
+  gguf_filename     = var.gguf_filename
+
+  # Serve autoscale
+  min_replicas = var.ray_min_replicas
   max_replicas = var.ray_replica_max
   replica_cpus = var.ray_replica_cpus
 

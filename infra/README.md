@@ -141,15 +141,21 @@ IMAGE_TAG=0.1.1 infra/scripts/push_image.sh
 Manifest tag is controlled by `image_tag` variable — to force pods to a new
 tag without re-applying TF just push the same tag and run the script.
 
-## Cost (approx)
+## Cost (approx, us-west-2 on-demand, 24×7)
 
-| Item | $/month (on-demand) |
+| Item | $/month |
 | --- | --- |
 | EKS control plane | $73 |
-| 2 × m7g.xlarge | region-dependent |
-| NAT GW + traffic | $33 + data |
-| ECR | ~$1 |
-| **Total** | **~$350-400** |
+| 2 × m7g.xlarge (4 vCPU/16 Gi each) | ~$235 ($0.1632/h × 2) |
+| NAT GW (single) | $33 + data |
+| EIP | $0 (attached) |
+| ECR storage | ~$1 |
+| Observability (when `enable_observability=true`, fits in spare node capacity) | $0 extra direct, may force +1 node if cluster is tight |
+| **Total at steady state** | **~$340/month** |
+
+Single-node mode (1 × m7g.xlarge, `node_desired_size=1`): ~$225/month.
+
+Paused (`node_desired_size=0`): ~$110/month (EKS + NAT only).
 
 To pause without destroying:
 

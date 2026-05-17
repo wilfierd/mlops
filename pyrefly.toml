@@ -1,0 +1,15 @@
+# Pyrefly config — deps live in the Docker image, not in local Python.
+# Local IDE checking only verifies our code; runtime is container-only.
+
+project_includes = ["app/**/*.py", "scripts/**/*.py"]
+
+# Treat missing third-party packages as silent — they exist in the
+# rayproject/ray base image, not in the dev's local Python.
+ignore_errors_in_generated_code = true
+
+[errors]
+# Deps live in the Docker base image, not in local Python.
+missing-import = false
+# @serve.deployment / @serve.ingress are dynamic decorators — the resulting
+# class gains `.bind()` etc. at runtime that static checkers can't see.
+missing-attribute = false

@@ -7,22 +7,44 @@ extra_az  = "us-west-2b"
 
 eks_version = "1.30"
 
-node_instance_types = ["m7g.xlarge"]
-node_capacity_type  = "ON_DEMAND"
-node_min_size       = 1
-node_desired_size   = 2
-node_max_size       = 4
+# --- Head MNG (Ray GCS + Serve proxy — no model) ---
+# t4g.large = 2 vCPU, 8 GiB, $48/month. Burstable is fine; head is not CPU-bound.
+head_instance_types = ["t4g.large"]
+head_capacity_type  = "ON_DEMAND"
 
-image_tag        = "0.1.0"
-model_id         = "Qwen/Qwen3-0.6B"
-ray_replica_max  = 3
-ray_replica_cpus = 3
+# --- Worker MNG (model serving) ---
+# m7g.xlarge = 4 vCPU, 16 GiB, $117/month, Graviton3 sustained.
+worker_instance_types = ["m7g.xlarge"]
+worker_capacity_type  = "ON_DEMAND"
+worker_min_size       = 1
+worker_desired_size   = 1
+worker_max_size       = 3
 
+# --- App ---
+image_tag = "0.1.0"
+
+# Backend: llamacpp = GGUF Q4_K_M (fast on CPU, ARM-NEON optimized).
+# Switch to "transformers" for bf16 fallback if a GGUF isn't available.
+inference_backend = "llamacpp"
+model_id          = "Qwen/Qwen3-0.6B"
+gguf_repo_id      = "Qwen/Qwen3-0.6B-GGUF"
+gguf_filename     = "Qwen3-0.6B-Q4_K_M.gguf"
+
+# --- Ray Serve scaling ---
+# 1.5 CPU per replica + Q4_K_M = ~1 second / 64 tokens. 2 replicas baseline
+# for HA + ability to absorb traffic spikes via autoscale up to 4.
+ray_replica_cpus = 1.5
+ray_min_replicas = 2
+ray_replica_max  = 4
+
+# --- Cost guardrail ---
 monthly_budget_usd  = 100
-budget_alert_emails = []  # ["you@example.com"] to enable email alerts
+budget_alert_emails = [] # ["you@example.com"] to enable email alerts
 
+# --- Observability ---
+# Set false to save ~$10-15/month worth of cluster resources when not demoing.
 enable_observability   = true
-grafana_admin_password = ""  # empty = auto-generate, fetch via `terraform output -raw grafana_admin_password`
+grafana_admin_password = "" # empty = auto-generate, fetch via `terraform output -raw grafana_admin_password`
 
 tags = {
   Owner = "your-name"

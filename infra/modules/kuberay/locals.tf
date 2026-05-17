@@ -7,12 +7,24 @@
 
 locals {
   common_env = [
+    # Backend selection — llamacpp uses GGUF Q4_K_M, transformers uses bf16
+    { name = "INFERENCE_BACKEND", value = var.inference_backend },
     { name = "MODEL_ID", value = var.model_id },
     { name = "MODEL_DTYPE", value = var.model_dtype },
+
+    # llamacpp-specific
+    { name = "GGUF_REPO_ID", value = var.gguf_repo_id },
+    { name = "GGUF_FILENAME", value = var.gguf_filename },
+    { name = "LLAMA_N_CTX", value = tostring(var.llama_n_ctx) },
+    { name = "LLAMA_N_BATCH", value = tostring(var.llama_n_batch) },
+    # Thread count = CPU budget the actor reserves in Ray.
+    { name = "LLAMA_N_THREADS", value = tostring(var.replica_cpus) },
+    { name = "TORCH_NUM_THREADS", value = tostring(var.replica_cpus) },
+
+    # Shared
     { name = "ENABLE_THINKING", value = "false" },
     { name = "MAX_NEW_TOKENS", value = "160" },
     { name = "MAX_INPUT_TOKENS", value = "2048" },
-    { name = "TORCH_NUM_THREADS", value = tostring(var.replica_cpus) },
     { name = "MODEL_NUM_CPUS", value = tostring(var.replica_cpus) },
     { name = "MAX_ONGOING_REQUESTS", value = "1" },
     { name = "GRPC_DNS_RESOLVER", value = "native" },
@@ -73,6 +85,17 @@ locals {
           }
           template = {
             spec = {
+              # Pin head pod to the head MNG (t4g.large). The head pod
+              # tolerates `ray-role=head` taint set by the head node group.
+              nodeSelector = {
+                "ray.io/node-type" = "head"
+              }
+              tolerations = [{
+                key      = "ray-role"
+                operator = "Equal"
+                value    = "head"
+                effect   = "NoSchedule"
+              }]
               containers = [{
                 name            = "ray-head"
                 image           = var.image
@@ -117,6 +140,11 @@ locals {
           template = {
             spec = {
               terminationGracePeriodSeconds = 60
+              # Pin worker pods to the worker MNG (m7g.xlarge). The head MNG
+              # has a NoSchedule taint so workers naturally avoid it.
+              nodeSelector = {
+                "ray.io/node-type" = "worker"
+              }
               containers = [{
                 name            = "ray-worker"
                 image           = var.image

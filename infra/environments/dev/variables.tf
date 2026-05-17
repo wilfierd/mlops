@@ -40,29 +40,45 @@ variable "eks_version" {
   default     = "1.30"
 }
 
-variable "node_instance_types" {
-  type    = list(string)
-  default = ["m7g.xlarge"]
+# --- Worker node group (runs ChatModel actors) -----------------------------
+variable "worker_instance_types" {
+  description = "Instance types for the worker MNG (model serving)"
+  type        = list(string)
+  default     = ["m7g.xlarge"] # 4 vCPU, 16 GiB, Graviton3 sustained
 }
 
-variable "node_capacity_type" {
+variable "worker_capacity_type" {
   type    = string
   default = "ON_DEMAND"
 }
 
-variable "node_min_size" {
+variable "worker_min_size" {
   type    = number
   default = 1
 }
 
-variable "node_desired_size" {
+variable "worker_desired_size" {
   type    = number
-  default = 2
+  default = 1
 }
 
-variable "node_max_size" {
+variable "worker_max_size" {
   type    = number
-  default = 4
+  default = 3
+}
+
+# --- Head node group (runs Ray GCS + Serve proxy only) ---------------------
+# Head is non-CPU-intensive (no model). Burstable t4g.large is enough and
+# saves ~$70/month vs putting head on m7g.xlarge.
+variable "head_instance_types" {
+  description = "Instance types for the head MNG (Ray GCS + Serve proxy)"
+  type        = list(string)
+  default     = ["t4g.large"] # 2 vCPU, 8 GiB, Graviton2 burstable
+}
+
+variable "head_capacity_type" {
+  type    = string
+  default = "ON_DEMAND"
 }
 
 variable "image_tag" {
@@ -71,8 +87,27 @@ variable "image_tag" {
 }
 
 variable "model_id" {
-  type    = string
-  default = "Qwen/Qwen3-0.6B"
+  description = "HF safetensors repo (label + transformers backend)"
+  type        = string
+  default     = "Qwen/Qwen3-0.6B"
+}
+
+variable "inference_backend" {
+  description = "llamacpp (Q4_K_M, recommended) or transformers (bf16 fallback)"
+  type        = string
+  default     = "llamacpp"
+}
+
+variable "gguf_repo_id" {
+  description = "HF repo with the GGUF file (llamacpp backend)"
+  type        = string
+  default     = "Qwen/Qwen3-0.6B-GGUF"
+}
+
+variable "gguf_filename" {
+  description = "GGUF file name (llamacpp backend)"
+  type        = string
+  default     = "Qwen3-0.6B-Q4_K_M.gguf"
 }
 
 variable "ray_replica_max" {
@@ -81,8 +116,15 @@ variable "ray_replica_max" {
 }
 
 variable "ray_replica_cpus" {
-  type    = number
-  default = 3
+  description = "CPU each Ray Serve replica reserves. With llamacpp Q4 the model is fast enough at 1.5 CPU; bump to 2-3 for transformers bf16."
+  type        = number
+  default     = 1.5
+}
+
+variable "ray_min_replicas" {
+  description = "Minimum Ray Serve replicas (2 for HA)"
+  type        = number
+  default     = 2
 }
 
 variable "monthly_budget_usd" {

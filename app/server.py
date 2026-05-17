@@ -3,12 +3,12 @@ import html
 import os
 from typing import Literal
 
-import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from ray import serve
-from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from app.backends import get_backend
 
 
 api = FastAPI(title="CPU LLM Chat")
@@ -44,25 +44,6 @@ def _env_float(name: str, default: float) -> float:
     if not raw:
         return default
     return float(raw)
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.lower() in {"1", "true", "yes", "on"}
-
-
-def _env_dtype(name: str, default: str) -> torch.dtype:
-    raw = (os.getenv(name) or default).lower()
-    return {
-        "float32": torch.float32,
-        "fp32": torch.float32,
-        "bfloat16": torch.bfloat16,
-        "bf16": torch.bfloat16,
-        "float16": torch.float16,
-        "fp16": torch.float16,
-    }.get(raw, torch.float32)
 
 
 def _chat_html(model_id: str) -> str:
@@ -332,23 +313,14 @@ def _chat_html(model_id: str) -> str:
 @serve.ingress(api)
 class ChatModel:
     def __init__(self) -> None:
-        self.model_id = os.getenv("MODEL_ID", "Qwen/Qwen3-0.6B")
-        self.max_input_tokens = _env_int("MAX_INPUT_TOKENS", 2048)
         self.default_max_new_tokens = _env_int("MAX_NEW_TOKENS", 160)
-        self.enable_thinking = _env_bool("ENABLE_THINKING", False)
         self.replica = f"{os.uname().nodename}:{os.getpid()}"
 
-        torch.set_num_threads(_env_int("TORCH_NUM_THREADS", max(1, os.cpu_count() or 1)))
-        self.dtype = _env_dtype("MODEL_DTYPE", "bfloat16")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.model_id,
-            torch_dtype=self.dtype,
-        )
-        self.model.eval()
-
-        if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
+        # Backend chosen by INFERENCE_BACKEND env (default llamacpp).
+        # Each backend handles its own model load — Transformers downloads
+        # HF safetensors; LlamaCpp loads GGUF from HF hub cache.
+        self.backend = get_backend()
+        self.model_id = self.backend.model_id
 
     @api.get("/", response_class=HTMLResponse)
     async def index(self) -> HTMLResponse:
@@ -365,7 +337,7 @@ class ChatModel:
 
         max_new_tokens = request.max_new_tokens or self.default_max_new_tokens
         answer = await asyncio.to_thread(
-            self._generate,
+            self.backend.generate,
             request.messages,
             max_new_tokens,
             request.temperature,
@@ -373,75 +345,7 @@ class ChatModel:
         )
         return ChatResponse(answer=answer, model=self.model_id, replica=self.replica)
 
-    def _build_prompt(self, messages: list[Message]) -> str:
-        normalized = [message.model_dump() for message in messages]
-        chat_template = getattr(self.tokenizer, "chat_template", None)
-        if chat_template:
-            try:
-                return self.tokenizer.apply_chat_template(
-                    normalized,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    enable_thinking=self.enable_thinking,
-                )
-            except TypeError:
-                return self.tokenizer.apply_chat_template(
-                    normalized,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                )
 
-        lines = []
-        for message in normalized:
-            role = message["role"].upper()
-            lines.append(f"{role}: {message['content']}")
-        lines.append("ASSISTANT:")
-        return "\n".join(lines)
-
-    def _generate(
-        self,
-        messages: list[Message],
-        max_new_tokens: int,
-        temperature: float,
-        top_p: float,
-    ) -> str:
-        prompt = self._build_prompt(messages)
-        inputs = self.tokenizer(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=self.max_input_tokens,
-            return_attention_mask=True,
-        )
-
-        generation_kwargs = {
-            "input_ids": inputs["input_ids"],
-            "attention_mask": inputs["attention_mask"],
-            "max_new_tokens": max_new_tokens,
-            "pad_token_id": self.tokenizer.pad_token_id,
-            "eos_token_id": self.tokenizer.eos_token_id,
-        }
-        if temperature > 0:
-            generation_kwargs.update(
-                {
-                    "do_sample": True,
-                    "temperature": temperature,
-                    "top_p": top_p,
-                }
-            )
-        else:
-            generation_kwargs["do_sample"] = False
-
-        with torch.inference_mode():
-            output_ids = self.model.generate(**generation_kwargs)
-
-        prompt_tokens = inputs["input_ids"].shape[-1]
-        generated_ids = output_ids[0][prompt_tokens:]
-        text = self.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
-        stripped = text.lstrip()
-        if not self.enable_thinking and stripped.startswith("<think>") and "</think>" in stripped:
-            text = stripped.split("</think>", 1)[1].strip()
-        return text or "(empty response)"
-
-
-chat_app = ChatModel.bind()
+# `bind` is injected by the @serve.deployment decorator at runtime; static
+# checkers can't see it through Ray's dynamic class wrap.
+chat_app = ChatModel.bind()  # type: ignore[attr-defined]

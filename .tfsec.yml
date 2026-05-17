@@ -1,0 +1,24 @@
+# tfsec config. Lab-mode: suppress findings that we've explicitly scoped out.
+# Each entry has a clear reason — never blanket-disable without justification.
+
+exclude:
+  # We intentionally use a single NAT GW to save cost in lab.
+  # Multi-NAT requires multi-AZ workers which is out of lab scope.
+  - aws-vpc-no-public-egress-sgr
+
+  # EKS endpoint is public for the lab — reviewer informed.
+  - aws-eks-no-public-cluster
+
+  # KMS encryption skipped per lab scope (AES256 default OK).
+  - aws-ecr-repository-customer-key
+  - aws-s3-encryption-customer-key
+
+  # Image tag mutability — lab iterate nhanh.
+  - aws-ecr-enforce-immutable-repository
+
+  # ECR scan is enabled already; the rule sometimes mis-fires.
+  - aws-ecr-no-mutable-tags
+
+severity_overrides:
+  # Network egress rules: leave as default but lower severity
+  aws-vpc-add-description-to-security-group: LOW

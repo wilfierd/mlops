@@ -38,6 +38,9 @@ variable "node_groups" {
       value  = string
       effect = string
     })), [])
+    # Optional override; default is auto-detected from instance_types[0]
+    # (ARM if starts with t4g/m6g/m7g/m8g/c6g/c7g/r6g/r7g, else x86).
+    ami_type = optional(string, "")
   }))
 }
 

@@ -36,6 +36,16 @@ module "eks" {
       desired_size   = v.desired_size
       max_size       = v.max_size
 
+      # EKS managed AMI must match instance arch. AL2023_x86_64 default in
+      # the upstream module breaks ARM instances (t4g/m7g/c7g/...). We auto-
+      # detect from the family prefix of the first instance type unless the
+      # caller pins ami_type explicitly.
+      ami_type = v.ami_type != "" ? v.ami_type : (
+        can(regex("^(t4g|t6g|m6g|m7g|m8g|c6g|c7g|c8g|r6g|r7g|r8g|a1)\\.", v.instance_types[0]))
+        ? "AL2023_ARM_64_STANDARD"
+        : "AL2023_x86_64_STANDARD"
+      )
+
       labels = v.labels
       taints = v.taints
 

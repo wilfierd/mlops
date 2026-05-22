@@ -4,8 +4,9 @@ Adapted from `Test/scripts` style. Differences for LLM CPU workload:
 
 - No auth flow (chat is unauthenticated).
 - VU count 1..16 (not 50..300) — each request pins 1 actor for ~1s.
-- Latency thresholds in seconds (p95 < 3s baseline, < 30s peak).
+- Latency thresholds in seconds (steady load p95 < 5s, stress p95 < 15s, spike p95 < 30s).
 - Tagged `replica` metric so load balance is visible.
+- `chat_error_rate` tracks bad responses only; `chat_slow_rate` tracks responses over 10s.
 - `max_ongoing_requests=1` per replica means >2 VUs queue at the proxy.
 
 ## Suites

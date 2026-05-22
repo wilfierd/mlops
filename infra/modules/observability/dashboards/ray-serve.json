@@ -12,9 +12,15 @@
     "list": [
       {
         "name": "app",
-        "type": "constant",
+        "label": "Application",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(ray_serve_num_router_requests_total{application!=\"\"}, application)",
+        "refresh": 1,
+        "sort": 1,
         "current": {"text": "llm-chat-dev", "value": "llm-chat-dev"},
-        "hide": 2
+        "includeAll": false,
+        "multi": false
       }
     ]
   },
@@ -27,7 +33,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "count(ray_serve_replica_processing_queries{application=\"$app\"})",
+          "expr": "sum(ray_serve_deployment_replica_healthy{application=\"$app\"})",
           "legendFormat": "running",
           "refId": "A"
         }
@@ -42,7 +48,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "max(ray_serve_deployment_replicas_target{application=\"$app\"})",
+          "expr": "max(ray_serve_autoscaling_target_replicas{application=\"$app\"})",
           "legendFormat": "target",
           "refId": "A"
         }
@@ -84,12 +90,12 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "count(ray_serve_replica_processing_queries{application=\"$app\"}) by (deployment)",
+          "expr": "sum(ray_serve_deployment_replica_healthy{application=\"$app\"}) by (deployment)",
           "legendFormat": "{{deployment}} running",
           "refId": "A"
         },
         {
-          "expr": "max(ray_serve_deployment_replicas_target{application=\"$app\"}) by (deployment)",
+          "expr": "max(ray_serve_autoscaling_target_replicas{application=\"$app\"}) by (deployment)",
           "legendFormat": "{{deployment}} target",
           "refId": "B"
         }
@@ -105,8 +111,8 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "ray_serve_replica_processing_queries{application=\"$app\"}",
-          "legendFormat": "{{replica}}",
+          "expr": "ray_serve_num_ongoing_requests_at_replicas{application=\"$app\"}",
+          "legendFormat": "{{deployment}} {{handle}}",
           "refId": "A"
         }
       ],
@@ -120,8 +126,8 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "ray_serve_replica_pending_queries{application=\"$app\"}",
-          "legendFormat": "{{replica}}",
+          "expr": "ray_serve_deployment_queued_queries{application=\"$app\"}",
+          "legendFormat": "{{deployment}} {{handle}}",
           "refId": "A"
         }
       ],
@@ -165,8 +171,8 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(increase(ray_serve_num_replica_starts_total{application=\"$app\"}[5m])) by (deployment)",
-          "legendFormat": "{{deployment}} starts",
+          "expr": "sum(increase(ray_serve_replica_startup_latency_ms_count{application=\"$app\"}[5m])) by (deployment)",
+          "legendFormat": "{{deployment}} startups",
           "refId": "A"
         }
       ],

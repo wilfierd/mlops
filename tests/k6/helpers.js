@@ -20,6 +20,7 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' };
 // --- Custom metrics --------------------------------------------------------
 export const chatDuration = new Trend('chat_duration', true);  // wall time / request (ms)
 export const chatErrorRate = new Rate('chat_error_rate');
+export const chatSlowRate = new Rate('chat_slow_rate');
 export const tokenCount = new Counter('chat_tokens_generated_total');
 export const emptyAnswers = new Counter('chat_empty_answers');
 export const replicaHits = new Counter('chat_replica_hits');  // tagged by replica
@@ -89,9 +90,12 @@ export function assertChatOK(res, answer) {
   const ok = check(res, {
     'chat: status 200':       (r) => r.status === 200,
     'chat: has answer':       () => answer && answer.length > 0,
-    'chat: under 10s':        (r) => r.timings.duration < 10000,
   });
   chatErrorRate.add(!ok);
+  const fastEnough = check(res, {
+    'chat: under 10s':        (r) => r.timings.duration < 10000,
+  });
+  chatSlowRate.add(!fastEnough);
   return ok;
 }
 

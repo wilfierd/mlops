@@ -12,9 +12,15 @@
     "list": [
       {
         "name": "app",
-        "type": "constant",
+        "label": "Application",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(ray_serve_num_router_requests_total{application!=\"\"}, application)",
+        "refresh": 1,
+        "sort": 1,
         "current": {"text": "llm-chat-dev", "value": "llm-chat-dev"},
-        "hide": 2
+        "includeAll": false,
+        "multi": false
       }
     ]
   },
@@ -27,7 +33,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=\"$app\", route=\"/chat\"}[1m]))",
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/chat\"}[1m]))",
           "refId": "A"
         }
       ],
@@ -41,7 +47,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=\"$app\", route=\"/chat\"}[5m])) by (le)) / 1000",
+          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/chat\"}[5m])) by (le)) / 1000",
           "refId": "A"
         }
       ],
@@ -55,7 +61,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=\"$app\", route=\"/chat\"}[5m])) by (le)) / 1000",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/chat\"}[5m])) by (le)) / 1000",
           "refId": "A"
         }
       ],
@@ -82,7 +88,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket{application=\"$app\", route=\"/chat\"}[5m])) by (le)) / 1000",
+          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/chat\"}[5m])) by (le)) / 1000",
           "refId": "A"
         }
       ],
@@ -96,7 +102,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "100 * sum(rate(ray_serve_num_http_error_requests_total{application=\"$app\", route=\"/chat\"}[5m])) / clamp_min(sum(rate(ray_serve_num_router_requests_total{application=\"$app\", route=\"/chat\"}[5m])), 1)",
+          "expr": "100 * sum(rate(ray_serve_num_http_error_requests_total{application=~\"$app\", route=\"/chat\"}[5m])) / clamp_min(sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/chat\"}[5m])), 1)",
           "refId": "A"
         }
       ],
@@ -123,7 +129,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "64 * sum(rate(ray_serve_num_router_requests_total{application=\"$app\", route=\"/chat\"}[1m]))",
+          "expr": "64 * sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/chat\"}[1m]))",
           "refId": "A"
         }
       ],
@@ -138,7 +144,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=\"$app\"}[1m])) by (route)",
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\"}[1m])) by (route)",
           "legendFormat": "{{route}}",
           "refId": "A"
         }
@@ -153,17 +159,17 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=\"$app\", route=\"/chat\"}[2m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/chat\"}[2m])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=\"$app\", route=\"/chat\"}[2m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/chat\"}[2m])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket{application=\"$app\", route=\"/chat\"}[2m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/chat\"}[2m])) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -172,18 +178,18 @@
     },
     {
       "id": 9,
-      "title": "Requests distribution across replicas (last 5m)",
+      "title": "Requests per replica (last 5m)",
       "type": "barchart",
       "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(increase(ray_serve_deployment_request_counter_total{application=\"$app\"}[5m])) by (replica)",
+          "expr": "sum(increase(ray_serve_deployment_request_counter_total{application=~\"$app\"}[5m])) by (replica)",
           "legendFormat": "{{replica}}",
           "refId": "A"
         }
       ],
-      "description": "Hot replica? Even distribution? Check load balance."
+      "description": "Hot replica? Even distribution? Check load balance across the 2 actors per pod."
     },
     {
       "id": 10,
@@ -193,7 +199,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=\"$app\"}[1m])) by (status_code)",
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\"}[1m])) by (status_code)",
           "legendFormat": "{{status_code}}",
           "refId": "A"
         }
@@ -208,7 +214,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_deployment_processing_latency_ms_bucket{application=\"$app\"}[2m])) by (le, deployment))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_deployment_processing_latency_ms_bucket{application=~\"$app\"}[2m])) by (le, deployment))",
           "legendFormat": "{{deployment}}",
           "refId": "A"
         }
@@ -224,7 +230,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=\"$app\", route=~\"/health|/-/healthz\"}[1m]))",
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=~\"/health|/-/healthz\"}[1m]))",
           "legendFormat": "health rps",
           "refId": "A"
         }

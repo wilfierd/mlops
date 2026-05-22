@@ -9,7 +9,11 @@ ENV="${ENV:-dev}"
 ENV_DIR="${INFRA_DIR}/environments/${ENV}"
 
 IMAGE_TAG="${IMAGE_TAG:-}"
-PRELOAD_MODEL="${PRELOAD_MODEL:-true}"
+# Default false: keep image lean (~2.5GB) and decouple model choice from
+# image rebuild. Pod downloads GGUF on first start (~30s, cached in pod's
+# HF_HOME volume). Override to true only when you want fully-baked images
+# (e.g. air-gapped clusters or strict cold-start SLA).
+PRELOAD_MODEL="${PRELOAD_MODEL:-false}"
 INFERENCE_BACKEND="${INFERENCE_BACKEND:-llamacpp}"
 GGUF_REPO_ID="${GGUF_REPO_ID:-bartowski/Qwen_Qwen3-0.6B-GGUF}"
 GGUF_FILENAME="${GGUF_FILENAME:-Qwen_Qwen3-0.6B-Q4_K_M.gguf}"

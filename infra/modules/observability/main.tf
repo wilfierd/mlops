@@ -36,6 +36,7 @@ resource "helm_release" "kube_prom_stack" {
         serviceMonitorSelectorNilUsesHelmValues = false
         serviceMonitorNamespaceSelector         = {}
         podMonitorSelectorNilUsesHelmValues     = false
+        podMonitorNamespaceSelector             = {}
         ruleSelectorNilUsesHelmValues           = false
       }
     }
@@ -86,6 +87,37 @@ resource "kubectl_manifest" "ray_service_monitor" {
         }]
       }
       endpoints = [{
+        port     = "metrics"
+        path     = "/metrics"
+        interval = "15s"
+      }]
+    }
+  })
+
+  depends_on = [helm_release.kube_prom_stack]
+}
+
+# Scrape worker pod metrics directly. KubeRay only creates head Services, so a
+# ServiceMonitor sees head metrics but misses worker node CPU/memory.
+resource "kubectl_manifest" "ray_worker_pod_monitor" {
+  yaml_body = yamlencode({
+    apiVersion = "monitoring.coreos.com/v1"
+    kind       = "PodMonitor"
+    metadata = {
+      name      = "ray-worker-metrics"
+      namespace = kubernetes_namespace.monitoring.metadata[0].name
+      labels = {
+        release = "kube-prom-stack"
+      }
+    }
+    spec = {
+      namespaceSelector = { matchNames = [var.ray_namespace] }
+      selector = {
+        matchLabels = {
+          "ray.io/node-type" = "worker"
+        }
+      }
+      podMetricsEndpoints = [{
         port     = "metrics"
         path     = "/metrics"
         interval = "15s"

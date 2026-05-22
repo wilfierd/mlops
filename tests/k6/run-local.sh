@@ -111,7 +111,7 @@ fi
   echo "k6 exit status: ${K6_STATUS}"
   echo
   echo "Key metrics (grepped from k6.log):"
-  grep -E 'chat_duration|chat_error_rate|http_req_duration|http_req_failed|http_reqs|iterations|vus_max|chat_replica_hits' \
+  grep -E 'chat_duration|chat_error_rate|chat_slow_rate|http_req_duration|http_req_failed|http_reqs|iterations|vus_max|chat_replica_hits' \
     "${OUT_DIR}/k6.log" || true
   echo
   echo "Pods/RayService after run:"

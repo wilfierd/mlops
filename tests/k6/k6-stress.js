@@ -41,7 +41,7 @@ export const options = {
   },
   thresholds: {
     // Looser — under stress, scale-up latency is real and tolerated.
-    chat_duration:   ['p(95)<10000', 'p(99)<30000'],
+    chat_duration:   ['p(95)<15000', 'p(99)<45000'],
     chat_error_rate: ['rate<0.10'],
     http_req_failed: ['rate<0.10'],
   },

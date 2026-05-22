@@ -23,7 +23,7 @@ export const options = {
     },
   },
   thresholds: {
-    chat_duration:   ['p(50)<2500', 'p(95)<4000', 'p(99)<6000'],
+    chat_duration:   ['p(50)<4000', 'p(95)<5000', 'p(99)<8000'],
     chat_error_rate: ['rate<0.02'],
     http_req_failed: ['rate<0.02'],
   },

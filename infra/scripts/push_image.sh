@@ -1,29 +1,58 @@
 #!/usr/bin/env bash
-# Build + push the chat-app image to the ECR repo created by Terraform.
-# Reads outputs from environments/${ENV}/ so it always uses the right account/region/repo.
+# Build + push the FastAPI/Embedder app image to the ECR repo owned by the
+# persistent stack. The LLM image (vllm-openai) is pulled from upstream by
+# the cluster and is NOT built/pushed here.
+#
+# Inputs (env, all optional):
+#   ENV          environments/<env>/persistent — defaults to dev
+#   IMAGE_TAG    image tag — defaults to short git SHA (then "dev" if no git)
+#   DOCKERFILE   path to Dockerfile — defaults to Dockerfile.app, falls back to Dockerfile
+#   DOCKER_CMD   docker | podman — autodetect
+#   IMAGE_PLATFORM  linux/amd64 (always; head + GPU are both x86 in rev3+)
+#   ROLL         "true" to kubectl delete pods after push (default: true)
+#   NAMESPACE    k8s namespace — defaults to llm-chat
+#
+# Reads from persistent stack outputs (ECR is owned by persistent).
+
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 INFRA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV="${ENV:-dev}"
-ENV_DIR="${INFRA_DIR}/environments/${ENV}"
+PERSISTENT_DIR="${INFRA_DIR}/environments/${ENV}/persistent"
 
-IMAGE_TAG="${IMAGE_TAG:-}"
-# Default false: keep image lean (~2.5GB) and decouple model choice from
-# image rebuild. Pod downloads GGUF on first start (~30s, cached in pod's
-# HF_HOME volume). Override to true only when you want fully-baked images
-# (e.g. air-gapped clusters or strict cold-start SLA).
-PRELOAD_MODEL="${PRELOAD_MODEL:-false}"
-INFERENCE_BACKEND="${INFERENCE_BACKEND:-llamacpp}"
-GGUF_REPO_ID="${GGUF_REPO_ID:-bartowski/Qwen_Qwen3-0.6B-GGUF}"
-GGUF_FILENAME="${GGUF_FILENAME:-Qwen_Qwen3-0.6B-Q4_K_M.gguf}"
 DOCKER_CMD="${DOCKER_CMD:-docker}"
-IMAGE_PLATFORM="${IMAGE_PLATFORM:-}"
+IMAGE_PLATFORM="${IMAGE_PLATFORM:-linux/amd64}"
+NAMESPACE="${NAMESPACE:-llm-chat}"
+ROLL="${ROLL:-true}"
+
+# Pick the right Dockerfile. Prefer Dockerfile.app once it exists (P2 onward
+# introduces it). Fallback to legacy chat-only Dockerfile so this script keeps
+# working during the migration window.
+if [[ -z "${DOCKERFILE:-}" ]]; then
+  if [[ -f "${ROOT_DIR}/Dockerfile.app" ]]; then
+    DOCKERFILE="${ROOT_DIR}/Dockerfile.app"
+  else
+    DOCKERFILE="${ROOT_DIR}/Dockerfile"
+  fi
+fi
+
+# Image tag: prefer caller-supplied IMAGE_TAG, else short git SHA, else "dev".
+if [[ -z "${IMAGE_TAG:-}" ]]; then
+  if IMAGE_TAG=$(git -C "${ROOT_DIR}" rev-parse --short HEAD 2>/dev/null); then
+    :
+  else
+    IMAGE_TAG="dev"
+  fi
+fi
 
 log() { printf '[push] %s\n' "$*"; }
 
 require_cmd() {
-  command -v "$1" >/dev/null 2>&1 || { echo "missing command: $1" >&2; exit 1; }
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "missing command: $1" >&2
+    exit 1
+  }
 }
 
 main() {
@@ -35,59 +64,60 @@ main() {
       DOCKER_CMD=podman
       log "docker not found, using podman"
     else
-      echo "need docker or podman" >&2; exit 1
+      echo "need docker or podman" >&2
+      exit 1
     fi
   fi
 
-  local region repo model tag
-  region="$(terraform -chdir="${ENV_DIR}" output -raw region)"
-  repo="$(terraform -chdir="${ENV_DIR}" output -raw ecr_repository_url)"
-  model="$(terraform -chdir="${ENV_DIR}" output -raw model_id)"
-  tag="${IMAGE_TAG:-$(terraform -chdir="${ENV_DIR}" output -raw image_tag)}"
+  if [[ ! -d "${PERSISTENT_DIR}" ]]; then
+    echo "persistent stack dir not found: ${PERSISTENT_DIR}" >&2
+    echo "did you run 'make persistent-apply' first?" >&2
+    exit 1
+  fi
+
+  local region repo
+  region="$(terraform -chdir="${PERSISTENT_DIR}" output -raw region)"
+  repo="$(terraform -chdir="${PERSISTENT_DIR}" output -raw ecr_app_url)"
   local registry="${repo%%/*}"
 
-  log "env=${ENV} region=${region} repo=${repo} tag=${tag} model=${model}"
+  log "env=${ENV} region=${region} repo=${repo} tag=${IMAGE_TAG} dockerfile=${DOCKERFILE} platform=${IMAGE_PLATFORM}"
 
   log "aws ecr login -> ${registry}"
   aws ecr get-login-password --region "${region}" \
     | "${DOCKER_CMD}" login --username AWS --password-stdin "${registry}"
 
-  if [[ -n "${IMAGE_PLATFORM}" && "${DOCKER_CMD}" == "docker" ]]; then
-    log "buildx build ${repo}:${tag} platform=${IMAGE_PLATFORM} (PRELOAD_MODEL=${PRELOAD_MODEL} backend=${INFERENCE_BACKEND})"
+  local platform_args=()
+  if [[ -n "${IMAGE_PLATFORM}" ]]; then
+    platform_args=(--platform "${IMAGE_PLATFORM}")
+  fi
+
+  if [[ "${DOCKER_CMD}" == "docker" ]] && docker buildx version >/dev/null 2>&1; then
+    log "buildx build + push ${repo}:${IMAGE_TAG}"
     docker buildx build \
-      --platform "${IMAGE_PLATFORM}" \
-      --build-arg "MODEL_ID=${model}" \
-      --build-arg "PRELOAD_MODEL=${PRELOAD_MODEL}" \
-      --build-arg "INFERENCE_BACKEND=${INFERENCE_BACKEND}" \
-      --build-arg "GGUF_REPO_ID=${GGUF_REPO_ID}" \
-      --build-arg "GGUF_FILENAME=${GGUF_FILENAME}" \
-      -t "${repo}:${tag}" \
+      "${platform_args[@]}" \
+      -f "${DOCKERFILE}" \
+      -t "${repo}:${IMAGE_TAG}" \
       --push \
       "${ROOT_DIR}"
   else
-    log "build ${repo}:${tag} platform=${IMAGE_PLATFORM:-native} (PRELOAD_MODEL=${PRELOAD_MODEL} backend=${INFERENCE_BACKEND})"
-    local platform_args=()
-    if [[ -n "${IMAGE_PLATFORM}" ]]; then
-      platform_args=(--platform "${IMAGE_PLATFORM}")
-    fi
+    log "build ${repo}:${IMAGE_TAG}"
     "${DOCKER_CMD}" build \
       "${platform_args[@]}" \
-      --build-arg "MODEL_ID=${model}" \
-      --build-arg "PRELOAD_MODEL=${PRELOAD_MODEL}" \
-      --build-arg "INFERENCE_BACKEND=${INFERENCE_BACKEND}" \
-      --build-arg "GGUF_REPO_ID=${GGUF_REPO_ID}" \
-      --build-arg "GGUF_FILENAME=${GGUF_FILENAME}" \
-      -t "${repo}:${tag}" \
+      -f "${DOCKERFILE}" \
+      -t "${repo}:${IMAGE_TAG}" \
       "${ROOT_DIR}"
 
-    log "push ${repo}:${tag}"
-    "${DOCKER_CMD}" push "${repo}:${tag}"
+    log "push ${repo}:${IMAGE_TAG}"
+    "${DOCKER_CMD}" push "${repo}:${IMAGE_TAG}"
   fi
 
-  log "rolling pods to pick up new image"
-  kubectl -n llm-chat delete pod --all --grace-period=0 --force 2>/dev/null || true
-
-  log "done. monitor: kubectl -n llm-chat get pods -w"
+  if [[ "${ROLL}" == "true" ]]; then
+    log "rolling pods in ${NAMESPACE} so the new image is pulled"
+    kubectl -n "${NAMESPACE}" delete pod --all --grace-period=0 --force 2>/dev/null || true
+    log "done. monitor: kubectl -n ${NAMESPACE} get pods -w"
+  else
+    log "done (skipped pod roll because ROLL=${ROLL})"
+  fi
 }
 
 main "$@"

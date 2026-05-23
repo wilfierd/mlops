@@ -15,16 +15,24 @@ module "eks" {
   enable_cluster_creator_admin_permissions = true
   authentication_mode                      = "API_AND_CONFIG_MAP"
 
-  cluster_addons = {
-    coredns = {
-      most_recent = true
-      configuration_values = jsonencode({
-        replicaCount = 2
-      })
-    }
-    kube-proxy = { most_recent = true }
-    vpc-cni    = { most_recent = true }
-  }
+  cluster_addons = merge(
+    {
+      coredns = {
+        most_recent = true
+        configuration_values = jsonencode({
+          replicaCount = 2
+        })
+      }
+      kube-proxy = { most_recent = true }
+      vpc-cni    = { most_recent = true }
+    },
+    var.enable_ebs_csi_driver ? {
+      aws-ebs-csi-driver = {
+        most_recent              = true
+        service_account_role_arn = aws_iam_role.ebs_csi[0].arn
+      }
+    } : {},
+  )
 
   eks_managed_node_groups = {
     for k, v in var.node_groups : k => {
@@ -97,4 +105,46 @@ resource "aws_iam_role_policy_attachment" "extra_ecr_pull" {
 
   policy_arn = aws_iam_policy.extra_ecr_pull[0].arn
   role       = module.eks.eks_managed_node_groups[each.key].iam_role_name
+}
+
+###############################################################################
+# EBS CSI driver — IRSA role (only created when enable_ebs_csi_driver = true)
+###############################################################################
+data "aws_iam_policy_document" "ebs_csi_assume" {
+  count = var.enable_ebs_csi_driver ? 1 : 0
+
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [module.eks.oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${module.eks.oidc_provider}:sub"
+      values   = ["system:serviceaccount:kube-system:ebs-csi-controller-sa"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${module.eks.oidc_provider}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ebs_csi" {
+  count              = var.enable_ebs_csi_driver ? 1 : 0
+  name               = "${var.name}-ebs-csi-controller"
+  assume_role_policy = data.aws_iam_policy_document.ebs_csi_assume[0].json
+  tags               = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi_managed" {
+  count      = var.enable_ebs_csi_driver ? 1 : 0
+  role       = aws_iam_role.ebs_csi[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 }

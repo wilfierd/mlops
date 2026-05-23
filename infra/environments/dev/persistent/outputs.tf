@@ -34,6 +34,18 @@ output "nat_gateway_enabled" {
   value = var.enable_nat_gateway
 }
 
+# Routed convenience — pick the right subnet for the node MNG based on NAT
+# posture. Lab mode (no NAT) → public subnet in worker_az. With NAT → private
+# subnet in worker_az. Always exactly 1 subnet ID to keep EBS AZ-pinning sane.
+output "node_subnet_ids" {
+  value = var.enable_nat_gateway ? (
+    module.network.worker_subnet_ids
+    ) : (
+    [module.network.public_subnet_ids[0]] # public_subnet_ids[0] is worker_az by network module convention
+  )
+  description = "Subnet IDs where the EKS managed node groups place nodes. Single AZ to match EBS volume placement."
+}
+
 ###############################################################################
 # ECR
 ###############################################################################

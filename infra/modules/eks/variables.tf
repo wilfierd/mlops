@@ -4,9 +4,9 @@ variable "name" {
 }
 
 variable "kubernetes_version" {
-  description = "EKS Kubernetes version"
+  description = "EKS Kubernetes version. Default 1.34 — currently in standard support (no extended-support fee). Bump in lockstep with AWS deprecation calendar."
   type        = string
-  default     = "1.30"
+  default     = "1.34"
 }
 
 variable "vpc_id" {
@@ -48,6 +48,12 @@ variable "extra_ecr_repository_arns" {
   description = "Extra ECR repo ARNs the nodes need pull permission for"
   type        = list(string)
   default     = []
+}
+
+variable "enable_ebs_csi_driver" {
+  description = "Install the aws-ebs-csi-driver EKS addon with an IRSA role. Required for binding PVs to pre-existing EBS volumes (persistent stack)."
+  type        = bool
+  default     = false
 }
 
 variable "tags" {

@@ -14,6 +14,18 @@ locals {
     { name = "EMBEDDER_NUM_THREADS", value = "1" },
     { name = "EMBEDDER_NUM_CPUS", value = "0.5" },
     { name = "RAG_API_NUM_CPUS", value = "0.2" },
+    # P5 — ingest pipeline
+    { name = "S3_BUCKET", value = var.s3_bucket },
+    { name = "QDRANT_HOST", value = "qdrant-0.qdrant.${var.namespace}.svc.cluster.local" },
+    { name = "QDRANT_GRPC_PORT", value = "6334" },
+    { name = "QDRANT_COLLECTION", value = "documents" },
+    { name = "CHUNK_SIZE_TOKENS", value = "500" },
+    { name = "CHUNK_OVERLAP_TOKENS", value = "80" },
+    { name = "INGEST_BATCH_SIZE", value = "32" },
+    { name = "RAY_SERVE_APP_NAME", value = var.service_name },
+    # P6 — QA
+    { name = "VLLM_BASE_URL", value = "http://vllm-server-0.vllm-server.${var.namespace}.svc.cluster.local:8000/v1" },
+    { name = "VLLM_MAX_MODEL_LEN", value = "4096" },
   ]
 
   rayservice = {

@@ -197,6 +197,8 @@ rag-up: kuberay-up ## deploy RayService for RAG API + Embedder (run 'make push' 
 	@IMAGE_TAG=$${IMAGE_TAG:-$$(git -C .. rev-parse --short HEAD 2>/dev/null || echo dev)}; \
 	 ECR_URL=$$(terraform -chdir=environments/$(ENV)/persistent output -raw ecr_app_url 2>/dev/null); \
 	 [ -n "$$ECR_URL" ] || { echo "ERROR: could not read ecr_app_url from persistent stack — run 'make persistent-apply' first"; exit 1; }; \
+	 S3_BUCKET=$$(terraform -chdir=environments/$(ENV)/persistent output -raw data_bucket 2>/dev/null); \
+	 [ -n "$$S3_BUCKET" ] || { echo "ERROR: could not read data_bucket from persistent stack"; exit 1; }; \
 	 APP_IMAGE=$${APP_IMAGE:-$$ECR_URL:$$IMAGE_TAG}; \
 	 REPO_NAME=$$(echo "$$ECR_URL" | sed 's|.*/||'); \
 	 REGION=$$(terraform -chdir=environments/$(ENV)/persistent output -raw region 2>/dev/null || echo us-west-2); \
@@ -204,8 +206,8 @@ rag-up: kuberay-up ## deploy RayService for RAG API + Embedder (run 'make push' 
 	   --image-ids "imageTag=$$IMAGE_TAG" \
 	   --region "$$REGION" > /dev/null 2>&1 \
 	   || { echo "ERROR: $$APP_IMAGE not found in ECR — run 'make push' first"; exit 1; }; \
-	 echo "==> Applying RAG RayService with image $$APP_IMAGE"; \
-	 sed "s|__APP_IMAGE__|$$APP_IMAGE|g" "$(RAG_MANIFEST)" | kubectl apply -f -
+	 echo "==> Applying RAG RayService with image $$APP_IMAGE (bucket=$$S3_BUCKET)"; \
+	 sed "s|__APP_IMAGE__|$$APP_IMAGE|g; s|__S3_BUCKET__|$$S3_BUCKET|g" "$(RAG_MANIFEST)" | kubectl apply -f -
 	@echo "==> Monitor startup:"
 	@echo "    kubectl -n $(NS) get rayservice,pods -w"
 	@echo "==> Then port-forward and bench:"

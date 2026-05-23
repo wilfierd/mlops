@@ -77,6 +77,26 @@ spec:
                   value: "0.5"
                 - name: RAG_API_NUM_CPUS
                   value: "0.2"
+                # P5 — ingest pipeline
+                - name: S3_BUCKET
+                  value: __S3_BUCKET__
+                - name: QDRANT_HOST
+                  value: qdrant-0.qdrant.llm-chat.svc.cluster.local
+                - name: QDRANT_GRPC_PORT
+                  value: "6334"
+                - name: QDRANT_COLLECTION
+                  value: documents
+                - name: CHUNK_SIZE_TOKENS
+                  value: "500"
+                - name: CHUNK_OVERLAP_TOKENS
+                  value: "80"
+                - name: INGEST_BATCH_SIZE
+                  value: "32"
+                - name: RAY_SERVE_APP_NAME
+                  value: llm-chat
+                # P6 — QA
+                - name: VLLM_BASE_URL
+                  value: http://vllm-server-0.vllm-server.llm-chat.svc.cluster.local:8000/v1
               resources:
                 requests:
                   cpu: "1200m"

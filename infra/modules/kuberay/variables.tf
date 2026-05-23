@@ -52,3 +52,8 @@ variable "head_memory_limit" {
   type    = string
   default = "5Gi"
 }
+
+variable "s3_bucket" {
+  description = "S3 bucket name for ingest pipeline (docs/ + meta/ prefixes)"
+  type        = string
+}

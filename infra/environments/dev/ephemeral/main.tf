@@ -107,3 +107,37 @@ resource "helm_release" "nvidia_device_plugin" {
 
   depends_on = [module.eks]
 }
+
+###############################################################################
+# 3. S3 data access for the head node — allows Ray pods to read/write the
+#    ingest bucket (docs/ + meta/ prefixes) without outbound IAM credentials.
+#
+#    Lab-grade: attaches an inline policy to the head MNG node role.
+#    Production upgrade path: replace with IRSA (annotate the Ray head
+#    ServiceAccount with a dedicated IAM role that scopes only to s3 data
+#    bucket; remove this resource).
+###############################################################################
+resource "aws_iam_role_policy" "head_s3_data" {
+  name = "${local.name_prefix}-head-s3-data"
+  role = module.eks.eks_managed_node_groups["head"].iam_role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "IngestDataBucket"
+      Effect = "Allow"
+      Action = [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket",
+      ]
+      Resource = [
+        "arn:aws:s3:::${local.data_bucket}",
+        "arn:aws:s3:::${local.data_bucket}/*",
+      ]
+    }]
+  })
+
+  depends_on = [module.eks]
+}

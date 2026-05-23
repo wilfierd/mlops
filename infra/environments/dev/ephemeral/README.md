@@ -15,13 +15,13 @@ make cluster-up          # 12–15 min: EKS + 2 MNGs + addons + PVs bind
 make cluster-down        # 5 min: snapshot Qdrant → S3, then destroy
 ```
 
-## What this stack creates
+## What this stack creates (rev5 cost-first default)
 
 | Resource | Notes |
 |---|---|
-| EKS control plane v1.30 | $0.10/h |
-| Head MNG (m6i.xlarge SPOT) | 1 node x86, Ray head + FastAPI + Embedder + Qdrant |
-| GPU MNG (g6/g5.xlarge SPOT) | 0–2 nodes, AL2023_x86_64_NVIDIA AMI (driver preinstalled) |
+| EKS control plane **v1.34** | $0.10/h. Standard support — avoid extended-support fee on 1.30. |
+| Head MNG **(m6i.large SPOT)** | 1 node x86, hosts Ray head + FastAPI + Embedder + Qdrant. 2 vCPU / 8 GiB; ~$0.030/h. Tight packing — see doc rev5 §4.2. |
+| GPU MNG **(g4dn.xlarge SPOT)** | 0–2 nodes, T4 16GB, AL2023_x86_64_NVIDIA AMI. ~$0.21/h. **No FP8 KV** — vllm args use `--kv-cache-dtype=auto`. |
 | addons: vpc-cni, coredns, kube-proxy, **aws-ebs-csi-driver** (with IRSA) | |
 | Helm: `nvidia-device-plugin` v0.14.5 | tolerates `nvidia.com/gpu` taint |
 | K8s namespace `llm-chat` | |
@@ -29,6 +29,17 @@ make cluster-down        # 5 min: snapshot Qdrant → S3, then destroy
 | PV `qdrant-data-pv` → bound to EBS `vol-...` (persistent stack) | survives destroy |
 | PV `llm-cache-pv` → bound to EBS `vol-...` (persistent stack) | survives destroy |
 | PVC `qdrant-data-pvc`, `llm-cache-pvc` in `llm-chat` namespace | |
+
+### Upgrade to stable profile
+
+For FP8 KV + 14B AWQ support + lower latency, override in tfvars:
+
+```hcl
+head_instance_types = ["m6i.xlarge"]               # more headroom; $0.060/h
+gpu_instance_types  = ["g6.xlarge", "g5.xlarge"]   # L4 24GB / A10G 24GB; ~$0.32–0.40/h
+```
+
+And switch vllm-openai args (see comments in `k8s/vllm-server.yaml`).
 
 App workloads (RayService, Qdrant StatefulSet, vllm-openai StatefulSet) are deployed in **later phases (P2 onward)** by separate Helm/kubectl manifests — not by Terraform.
 
@@ -78,17 +89,28 @@ kubectl get pv qdrant-data-pv llm-cache-pv
 
 | Symptom | Likely cause |
 |---|---|
-| GPU pod stuck `Pending` with "0/2 nodes available, 1 Insufficient nvidia.com/gpu" | Device plugin not running. Re-check AMI type. |
+| GPU pod stuck `Pending` with "0/2 nodes available, 1 Insufficient nvidia.com/gpu" | Device plugin not running. Re-check AMI type = `AL2023_x86_64_NVIDIA`. |
+| Head pod Pending after `kubectl apply` (Qdrant/vllm-server-0 OK but app actor not scheduling) | `m6i.large` allocatable ~1.8 vCPU is tight. Override `head_instance_types = ["m6i.xlarge"]` in tfvars. |
 | PVC stuck `Pending` after pod schedules | EBS CSI IRSA not wired. Check `aws_iam_role.ebs_csi` and the addon's `service_account_role_arn`. |
 | PV stays `Released` after a pod deletes | Old `claimRef` lingers. `kubectl patch pv qdrant-data-pv -p '{"spec":{"claimRef":null}}'` |
-| Spot eviction kills GPU node mid-demo | Set `gpu_capacity_type = "ON_DEMAND"` before high-stakes demos. ~$1/h × 4h ≈ $4 overhead. |
+| vllm-server-0 CrashLoopBackOff with `CUDA out of memory` | T4 + AWQ + KV cache too tight at `--gpu-memory-utilization=0.82`. Drop `--max-num-seqs` to 2, or `--max-model-len` to 3072. |
+| Spot eviction kills GPU node mid-demo | Set `gpu_capacity_type = "ON_DEMAND"` before high-stakes demos. ~$0.53/h × 4h ≈ $2.10 overhead. |
 | `terraform destroy` complains about claimRef on PV | PVCs must be deleted before PVs. `cluster-down` script does this. |
 
 ## Cost while up
 
-Hourly: $0.10 (EKS) + $0.32 (g6.xlarge spot) + $0.06 (m6i.xlarge spot) + ~$0.05 misc = **~$0.55/h**.
+Cost-first default (g4dn + m6i.large):
 
-80 hours/month ≈ **$46/month** total (with persistent stack ~$5/mo always-on for storage).
+| Component | Rate | 80h/month |
+|---|---:|---:|
+| EKS control plane | $0.10/h | $8.00 |
+| g4dn.xlarge SPOT (T4) | $0.21/h | $16.80 |
+| m6i.large SPOT | $0.030/h | $2.40 |
+| EBS root + misc | — | ~$2 |
+| Persistent storage (always-on) | — | ~$3–5 |
+| **Total cost-first** | | **~$35 / month** |
+
+Stable profile (g6 + m6i.xlarge): adds ~$15–20/month for FP8 KV + larger model headroom.
 
 ## Destroy
 

@@ -100,3 +100,35 @@ push: ## build + push app image to ECR + roll pods
 
 roll: ## force-delete pods so the latest image is pulled
 	kubectl -n $(NS) delete pod --all --grace-period=0 --force
+
+###############################################################################
+# P2 — vllm-openai server (deploy + smoke bench).
+###############################################################################
+.PHONY: vllm-up vllm-down vllm-logs vllm-pf vllm-bench
+
+VLLM_MANIFEST := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))/../k8s/vllm-server.yaml
+
+vllm-up: ## deploy vllm-openai StatefulSet + Service (cost-first T4 profile)
+	kubectl apply -f $(VLLM_MANIFEST)
+	@echo "==> Waiting for vllm-server pod Ready (first model download ~3–5 min)..."
+	kubectl -n $(NS) wait --for=condition=Ready pod/vllm-server-0 --timeout=900s
+	@echo "==> Ready. Port-forward then bench:"
+	@echo "    make vllm-pf &     # 'make vllm-pf' blocks; & to background"
+	@echo "    make vllm-bench"
+
+vllm-down: ## delete vllm-openai (keeps llm-cache PVC + EBS data)
+	kubectl delete -f $(VLLM_MANIFEST) --ignore-not-found
+
+vllm-logs: ## tail vllm-server logs
+	kubectl -n $(NS) logs -f vllm-server-0
+
+vllm-pf: ## port-forward 8000:8000 to vllm-server (blocking)
+	kubectl -n $(NS) port-forward svc/vllm-server 8000:8000
+
+vllm-bench: ## run scripts/bench_vllm.py against localhost:8000 (port-forward first)
+	python3 ../scripts/bench_vllm.py \
+		--concurrency 1,4 \
+		--requests 10 \
+		--prompt-tokens 3000 \
+		--new-tokens 200 \
+		--out ../reports/p2-vllm-bench.md

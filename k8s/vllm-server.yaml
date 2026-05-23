@@ -1,0 +1,137 @@
+# vllm-openai server — cost-first T4 profile (rev 5).
+#
+# Image:   official vllm/vllm-openai pinned to v0.11.0.
+# GPU:     g4dn.xlarge (T4 16 GB, Turing — NO FP8 KV).
+# Args:    --quantization=awq --kv-cache-dtype=auto --max-model-len=4096
+#          --max-num-seqs=4 (T4-safe; see doc §3.5.4)
+# Storage: HF_HOME mounted to llm-cache PVC (provisioned by ephemeral stack)
+#          so the model survives cluster destroy/recreate.
+#
+# Deploy after `make cluster-up`:
+#   kubectl apply -f k8s/vllm-server.yaml
+# First-time model download: ~5 GB AWQ over IGW → ~3–5 min.
+# Subsequent cluster-up: reads from EBS llm-cache → ~15 s model load.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-server
+  namespace: llm-chat
+  labels:
+    app.kubernetes.io/name: vllm-server
+spec:
+  # Headless so pod DNS resolves: vllm-server-0.vllm-server.llm-chat.svc.cluster.local
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: vllm-server
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vllm-server
+  namespace: llm-chat
+  labels:
+    app.kubernetes.io/name: vllm-server
+spec:
+  serviceName: vllm-server
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vllm-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vllm-server
+    spec:
+      # Pin to GPU node group + tolerate the nvidia.com/gpu taint.
+      nodeSelector:
+        node-type: gpu-worker
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      # If the spot GPU node is missing for any reason, fail fast rather than
+      # silently scheduling onto the head node and OOM-ing.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.11.0
+          imagePullPolicy: IfNotPresent
+          # Cost-first T4 profile. To switch to stable g6/g5 profile, change:
+          #   --quantization=awq_marlin
+          #   --kv-cache-dtype=fp8_e5m2
+          #   --max-model-len=8192
+          #   --max-num-seqs=16
+          args:
+            - "--model=Qwen/Qwen2.5-7B-Instruct-AWQ"
+            - "--quantization=awq"
+            - "--dtype=float16"
+            - "--kv-cache-dtype=auto"
+            - "--max-model-len=4096"
+            - "--max-num-seqs=4"
+            # 0.82 (not 0.85) for T4 — leaves ~2.9 GiB headroom for AWQ kernel
+            # warmup + CUDA workspace. Stable profile (A10G/L4) can use 0.85
+            # because larger VRAM absorbs the same absolute overhead.
+            - "--gpu-memory-utilization=0.82"
+            - "--swap-space=4"
+            - "--served-model-name=qwen-rag"
+            - "--host=0.0.0.0"
+            - "--port=8000"
+            - "--disable-log-requests"
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: HF_HOME
+              value: /models/hf-cache
+            # Use modelscope mirror in case HF rate-limits during first download;
+            # comment out if you prefer strict HF only.
+            # - name: VLLM_USE_MODELSCOPE
+            #   value: "False"
+          resources:
+            requests:
+              cpu: "3"
+              memory: "12Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "3500m"
+              memory: "14Gi"
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models/hf-cache
+            # Shared memory bump — vllm uses /dev/shm for IPC across worker
+            # threads. 256Mi default is enough for 1 GPU + max_num_seqs=4.
+            - name: dshm
+              mountPath: /dev/shm
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            # First-time model download + CUDA graph + AWQ kernel warmup:
+            # initialDelay 90s; subsequent cluster-up (model cached on EBS)
+            # is faster but we keep the window generous.
+            initialDelaySeconds: 90
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60   # 10 min total tolerance for cold start
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 600
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: llm-cache-pvc
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi

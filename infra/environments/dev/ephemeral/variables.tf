@@ -120,7 +120,7 @@ variable "gpu_min_size" {
 }
 
 variable "gpu_desired_size" {
-  description = "1 GPU node up while cluster is up. Bump to 2 for ChatModel scale-out."
+  description = "1 GPU node up while cluster is up. Bump to 2 for vLLM scale-out."
   type        = number
   default     = 1
 }

@@ -101,7 +101,7 @@ Hệ thống hiện tại phục vụ **chat ngắn** với Qwen3-0.6B Q4_K_M tr
 
 ## 1. Hiện trạng (inventory)
 
-Nguồn: `infra/environments/dev/terraform.tfvars`, `infra/modules/kuberay/locals.tf`, `app/backends/llamacpp_backend.py`.
+Nguồn lịch sử: CPU-only prototype trước rev 5. Các file runtime cũ đã bị bỏ khi chuyển sang `persistent/` + `ephemeral/`, vLLM, và `app/rag_server.py`.
 
 ### 1.1 EKS topology (snapshot — đang dùng cho `llm-chat`)
 
@@ -1009,8 +1009,8 @@ Pre-download model: dùng **PVC `llm-cache-pvc`** (xem §4.3 persistent EBS) —
 FROM python:3.11-slim
 
 WORKDIR /serve
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-app.txt .
+RUN pip install --no-cache-dir -r requirements-app.txt
 # requirements: fastapi, uvicorn, ray[serve]==2.55.1, openai>=1.40,
 #               onnxruntime==1.20.0, tokenizers, qdrant-client, pypdf, etc.
 
@@ -1025,7 +1025,7 @@ COPY scripts ./scripts
 
 ENV EMBEDDER_MODEL_PATH=/models/embedder-onnx-int8
 ENV PYTHONPATH=/serve
-CMD ["python", "-m", "app.server"]
+CMD ["ray", "start", "--head", "--block", "--dashboard-host=0.0.0.0"]
 ```
 
 Image size: ~1.5 GiB (no CUDA libs). ECR pull trên head: ~15s.
@@ -1707,7 +1707,7 @@ Runbook entries thêm vào `docs/runbook.md`:
 
 ### 9.3 Definition of done (production-ready, không phải MVP)
 
-- [ ] `/qa` p95 <= 18s trên cost-first profile hoặc <= 12s trên stable profile (đo qua `scripts/load_test.py` 100 req)
+- [ ] `/qa` p95 <= 18s trên cost-first profile hoặc <= 12s trên stable profile (đo bằng load script RAG riêng ở P6)
 - [ ] Recall@5 ≥ 0.80 trên VN eval set 50 câu
 - [ ] Faithfulness ≥ 0.70 (manual review 50 câu)
 - [ ] Out-of-domain refusal rate ≥ 0.90 ("không tìm thấy")

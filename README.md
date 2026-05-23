@@ -1,392 +1,107 @@
-# CPU LLM Chat on Ray Serve + Kubernetes
+# LLM RAG Chat on Ray + Kubernetes
 
-Ung dung nay host mot LLM tu quan ly tren CPU bang Ray Serve, chay tren Kubernetes qua KubeRay `RayService`, va autoscale model replicas theo concurrent request.
+Ứng dụng hiện tại là Document Q&A/RAG chatbot chạy trên EKS:
 
-## Thanh phan
+- Ray Serve/KubeRay chạy API RAG + ONNX embedder trên head node.
+- vLLM chạy LLM 7B AWQ trên GPU node bằng image upstream `vllm/vllm-openai`.
+- Qdrant lưu vector database trên EBS persistent volume.
+- ECR chỉ chứa app image nhẹ: FastAPI/Ray Serve + embedder ONNX. Không build lại image LLM.
 
-- `app/server.py`: FastAPI + Ray Serve deployment cho UI chat va API `/chat`.
-- `k8s/rayservice.yaml`: KubeRay `RayService` gom Ray cluster, Serve app, autoscaling theo `target_ongoing_requests`.
-- `Dockerfile`: image CPU cho Ray Serve + Transformers.
-- `scripts/load_test.py`: tao concurrent request de kiem tra autoscale.
-
-Model mac dinh la `Qwen/Qwen3-0.6B`. App dat `ENABLE_THINKING=false` de tat thinking mode, giu latency thap cho chat CPU.
-
-## Kien truc
+## Architecture
 
 ```text
-+-------------------------+
-| User / Browser / Client |
-+------------+------------+
-             |
-             | HTTP /chat
-             v
-+-------------------------+
-| port-forward or Ingress |
-+------------+------------+
-             |
-             v
-+---------------------------------------------------------------+
-| Kubernetes namespace: llm-chat                                |
-|                                                               |
-|  +-----------------------------+                              |
-|  | Service: llm-chat-serve-svc |                              |
-|  | port 8000                   |                              |
-|  +--------------+--------------+                              |
-|                 |                                             |
-|                 v                                             |
-|  +---------------------------------------------------------+  |
-|  | RayService: llm-chat                                   |  |
-|  |                                                         |  |
-|  |  +-----------------------+                              |  |
-|  |  | Ray Head Pod          |                              |  |
-|  |  | - Serve HTTP Proxy    |                              |  |
-|  |  | - Ray GCS/Dashboard   |                              |  |
-|  |  +-----------+-----------+                              |  |
-|  |              | routes requests / schedules actors        |  |
-|  |              v                                           |  |
-|  |  +---------------------------------------------------+  |  |
-|  |  | Ray Worker Pods CPU                              |  |  |
-|  |  |                                                   |  |  |
-|  |  |  +------------------+  +------------------+       |  |  |
-|  |  |  | Serve Replica 1  |  | Serve Replica 2  | ...   |  |  |
-|  |  |  | FastAPI endpoint |  | FastAPI endpoint |       |  |  |
-|  |  |  | Transformers LLM |  | Transformers LLM |       |  |  |
-|  |  |  | CPU inference    |  | CPU inference    |       |  |  |
-|  |  |  +------------------+  +------------------+       |  |  |
-|  |  +---------------------------------------------------+  |  |
-|  +---------------------------------------------------------+  |
-|                                                               |
-|  KubeRay Operator watches RayService and creates/updates pods. |
-+---------------------------------------------------------------+
-```
-
-Vai tro tung thanh phan:
-
-- `RayService`: custom resource cua KubeRay, khai bao Ray cluster va Ray Serve app trong mot manifest.
-- `Ray Head Pod`: quan ly Ray cluster, dashboard, GCS va Serve HTTP proxy.
-- `Ray Worker Pods`: noi chay model replicas tren CPU.
-- `Serve Replica`: mot actor Ray load tokenizer/model va xu ly request `/chat`.
-- `K8S Service`: endpoint Kubernetes expose Ray Serve HTTP proxy.
-
-## Flow chat request
-
-```text
-1. User / Browser
-   |
-   | POST /chat
-   | body: {messages, max_new_tokens, temperature, top_p}
-   v
-2. Kubernetes Service: llm-chat-serve-svc:8000
-   |
-   | forward HTTP request
-   v
-3. Ray Serve HTTP Proxy
-   |
-   | route to an available ChatModel replica
-   v
-4. ChatModel Serve Replica
-   |
-   | validate request
-   | build prompt from chat history
-   | call tokenizer
-   v
-5. CPU LLM
-   |
-   | model.generate()
-   v
-6. ChatModel Serve Replica
-   |
-   | decode generated tokens
-   | response: {answer, model, replica}
-   v
-7. User / Browser renders answer
-```
-
-Flow trong code:
-
-- UI va API nam trong `app/server.py`.
-- Endpoint `POST /chat` nhan `messages`, `max_new_tokens`, `temperature`, `top_p`.
-- Replica goi `AutoTokenizer` va `AutoModelForCausalLM` cua Transformers.
-- Sinh text bang `model.generate()` tren CPU, tra ve `answer` kem `model` va `replica` de de debug request da vao pod nao.
-
-## Flow autoscaling
-
-```text
-Concurrent requests increase
-          |
-          v
-Ray Serve proxy sends requests to deployment: ChatModel
-          |
-          v
-+--------------------------------------------------+
-| Is ongoing_requests_per_replica                  |
-| greater than target_ongoing_requests?            |
-+----------------------+---------------------------+
-                       |
-             No        |        Yes
-             |         |         |
-             v         |         v
- Keep current replica  |  Ray Serve autoscaler
- count                 |  adds model replicas
-                       |  up to max_replicas
-                       |         |
-                       |         v
-                       | +--------------------------+
-                       | | Does Ray cluster have    |
-                       | | enough free CPU?         |
-                       | +------------+-------------+
-                       |              |
-                       |    Yes       |       No
-                       |     |        |        |
-                       |     v        |        v
-                       | Schedule new | Ray autoscaler asks
-                       | replica on   | KubeRay for more
-                       | existing pod | worker pods
-                       |     |        |        |
-                       |     |        |        v
-                       |     |        | KubeRay creates new
-                       |     |        | Ray worker pod
-                       |     |        |        |
-                       |     |        |        v
-                       |     |        | New replica loads
-                       |     |        | model on CPU
-                       |     |        |
-                       +-----+--------+
-                             |
-                             v
-                 Requests are spread across replicas
-```
-
-Cau hinh autoscale hien tai trong `k8s/rayservice.yaml`:
-
-| Lop scale | Cau hinh | Y nghia |
-| --- | --- | --- |
-| Ray Serve replica | `target_ongoing_requests: 1` | Neu trung binh moi replica co hon 1 request dang xu ly, Serve scale out. |
-| Ray Serve replica | `max_ongoing_requests: 1` | Mot replica xu ly 1 request mot luc — phu hop khi chua bat dynamic batching tren CPU. |
-| Ray Serve replica | `min_replicas: 1`, `max_replicas: 3` | Luon co it nhat 1 model replica, toi da 3. |
-| Ray actor resources | `num_cpus: 3` | Moi model replica can 3 CPU logical trong Ray. |
-| Ray worker pods | `minReplicas: 1`, `maxReplicas: 3` | KubeRay tang worker pod khi cluster thieu CPU cho replica moi. |
-| Model dtype | `MODEL_DTYPE=bfloat16` | Suy luan nhanh hon ~1.5–2x so voi float32 tren CPU AVX-512/AMX. |
-
-Dieu quan trong: Serve scale theo request dang xu ly, con KubeRay scale worker pod khi Ray cluster khong con du CPU de schedule replica moi.
-
-## Chay local
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-serve run app.server:chat_app
-```
-
-Mo UI tai `http://127.0.0.1:8000`.
-
-Goi API:
-
-```bash
-curl -s http://127.0.0.1:8000/chat \
-  -H 'content-type: application/json' \
-  -d '{"messages":[{"role":"user","content":"Viet 3 y tuong MLOps ngan gon"}]}' | jq
-```
-
-## Build image thu cong
-
-```bash
-docker build -t llm-chat-ray:0.1.0 .
-```
-
-Neu muon bake model vao image de pod khong phai download luc start:
-
-```bash
-docker build \
-  --build-arg PRELOAD_MODEL=true \
-  --build-arg MODEL_ID=Qwen/Qwen3-0.6B \
-  -t llm-chat-ray:0.1.0 .
-```
-
-Push image len registry ma cluster truy cap duoc, hoac load image vao Minikube/kind neu deploy K8S local.
-
-## Build ARM64 cho Graviton
-
-Neu EKS worker dung `m7g/c7g` thi node la ARM64. Image cung phai la ARM64 hoac multi-arch.
-
-Build + push ARM64 len ECR sau khi `terraform apply`:
-
-```bash
-IMAGE_PLATFORM=linux/arm64 PRELOAD_MODEL=true ./infra/scripts/push_image.sh
-```
-
-Neu build ARM64 tren may Fedora x86 bang QEMU/buildx, lan dau thuong lau hon build native nhieu lan do emulation va preload model. Thuc te voi image nay nen tinh khoang 20-45 phut lan dau tuy may/mang/cache. Cach nhanh va sach hon la build tren mot EC2 Graviton tam thoi, push len ECR, roi reuse image.
-
-Neu chua muon xu ly ARM image, dung `m6i.xlarge/m6i.2xlarge` truoc.
-
-## Deploy tren Kubernetes local
-
-Local deploy mac dinh dung **Minikube chay tren Docker driver**. Docker o day chi de tao node Kubernetes local va build/load image; app van chay tren K8S bang KubeRay `RayService`.
-
-```text
-Docker daemon
+User
   |
-  +-- Minikube node container
-      |
-      +-- Kubernetes API
-      +-- KubeRay operator
-      +-- RayService
-          |
-          +-- Ray head pod
-          +-- Ray worker pod(s)
+  | kubectl port-forward svc/llm-chat-serve-svc :8000
+  v
++------------------------- EKS ephemeral stack -------------------------+
+| Namespace: llm-chat                                                   |
+|                                                                       |
+|  m6i.large head node                                                  |
+|  +----------------------+       +-------------------------------+     |
+|  | RayService llm-chat  | ----> | Qdrant StatefulSet            |     |
+|  | - RagApi             |       | PVC qdrant-data-pvc           |     |
+|  | - Embedder ONNX INT8 |       +-------------------------------+     |
+|  +----------+-----------+                                             |
+|             | HTTP OpenAI-compatible call                             |
+|             v                                                         |
+|  g4dn.xlarge GPU node                                                 |
+|  +----------------------+                                             |
+|  | vllm-openai          |                                             |
+|  | Qwen2.5-7B AWQ       |                                             |
+|  | PVC llm-cache-pvc    |                                             |
+|  +----------------------+                                             |
++------------------------------------------------------------------------+
               |
-              +-- Ray Serve ChatModel replica
-                  |
-                  +-- Transformers LLM on CPU
+              | binds existing EBS volumes / pulls app image
+              v
++----------------------- persistent stack ------------------------------+
+| VPC, ECR app repo, S3 data bucket, EBS qdrant, EBS LLM cache, OIDC     |
++------------------------------------------------------------------------+
 ```
 
-Deploy Minikube mot lenh:
+## Current Flow
+
+```text
+1. make persistent-apply       # one-time, giữ ECR/S3/EBS/cache
+2. make cluster-up             # dựng EKS + node groups + PV/PVC
+3. make push                   # build/push Dockerfile.app vào ECR
+4. make qdrant-up              # Qdrant + documents collection
+5. make vllm-up                # pull vllm image + cache model vào EBS
+6. make rag-up                 # RayService llm-chat: RagApi + Embedder
+7. make rag-pf                 # localhost:8000
+```
+
+Sau khi xong lab:
 
 ```bash
-./scripts/deploy_minikube.sh
+cd infra
+make cluster-down
 ```
 
-Script `scripts/deploy_minikube.sh` lam cac viec:
+`cluster-down` chỉ destroy ephemeral stack. ECR, S3, EBS Qdrant, EBS model cache vẫn nằm trong persistent stack nên lần sau không phải build/download lại từ đầu.
 
-1. Kiem tra `docker`, `minikube`, `kubectl`, `helm`.
-2. Start Minikube bang Docker driver neu profile chua chay.
-3. Chuyen kube context sang Minikube.
-4. Goi `scripts/deploy.sh` voi `LOAD_IMAGE=minikube`.
+## Important Files
 
-Script `scripts/deploy.sh` lam cac viec:
+| Path | Purpose |
+| --- | --- |
+| `Dockerfile.app` | Build app image + export embedder ONNX INT8. |
+| `app/rag_server.py` | Ray Serve app: `/healthz`, `/embed`, RAG API surface. |
+| `app/embedder.py` | ONNX Runtime embedder wrapper. |
+| `k8s/rayservice.yaml` | Single RayService `llm-chat`; no parallel `llm-chat-rag`. |
+| `k8s/qdrant.yaml` | Qdrant StatefulSet bound to persistent EBS. |
+| `k8s/vllm-server.yaml` | vLLM StatefulSet using upstream vLLM image. |
+| `infra/environments/dev/persistent/` | Long-lived infra. Do not destroy daily. |
+| `infra/environments/dev/ephemeral/` | EKS/node groups/PVs. Safe daily destroy/apply. |
+| `docs/rag-technical-design.md` | Detailed architecture plan and cost/perf reasoning. |
 
-1. Build Docker image.
-2. Load image vao Minikube/kind neu set `LOAD_IMAGE`.
-3. Cai KubeRay operator bang Helm neu cluster chua co KubeRay.
-4. Render manifest tam voi `IMAGE`, `MODEL_ID`, `NAMESPACE`.
-5. Apply `RayService`.
-
-Can co cac command:
+## Smoke Commands
 
 ```bash
-docker
-kubectl
-helm
-minikube  # neu dung Minikube
-kind      # neu dung kind
+cd infra
+make cluster-up
+make push
+make qdrant-up
+make vllm-up
+make rag-up
+make rag-pf
 ```
 
-Fedora cai Minikube:
+In another shell:
 
 ```bash
-curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-latest.x86_64.rpm
-sudo rpm -Uvh minikube-latest.x86_64.rpm
+curl -s http://127.0.0.1:8000/healthz | jq
+curl -s http://127.0.0.1:8000/embed \
+  -H 'content-type: application/json' \
+  -d '{"texts":["xin chao"],"mode":"query"}' | jq
 ```
 
-Fedora cai Helm:
+## Cost Posture
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-```
+Default is lab/cost-first:
 
-Mo chat UI sau khi deploy:
+- `persistent`: always-on storage only, roughly a few USD/month.
+- `ephemeral`: EKS + `m6i.large` head + `g4dn.xlarge` spot GPU while running.
+- NAT is disabled by default in persistent network config to avoid fixed NAT cost; app access is via port-forward, not public LoadBalancer.
 
-```bash
-kubectl -n llm-chat port-forward svc/llm-chat-serve-svc 8000:8000
-```
-
-Mo `http://127.0.0.1:8000`.
-
-### Deploy tu dong bang script
-
-Neu dung Minikube Docker driver, chay:
-
-```bash
-chmod +x scripts/deploy_minikube.sh
-./scripts/deploy_minikube.sh
-```
-
-Neu muon tu start cluster thu cong:
-
-```bash
-minikube start --driver=docker --cpus=6 --memory=8192
-LOAD_IMAGE=minikube ./scripts/deploy.sh
-```
-
-Bien moi truong hay dung:
-
-```bash
-# Minikube
-LOAD_IMAGE=minikube ./scripts/deploy.sh
-
-# kind
-LOAD_IMAGE=kind ./scripts/deploy.sh
-
-# Doi model
-LOAD_IMAGE=minikube MODEL_ID=Qwen/Qwen3-0.6B ./scripts/deploy.sh
-
-# Neu KubeRay operator da cai san
-LOAD_IMAGE=minikube INSTALL_KUBERAY=false ./scripts/deploy.sh
-
-# Mac dinh INSTALL_KUBERAY=auto:
-# - neu cluster da co CRD rayservices.ray.io thi skip Helm
-# - neu chua co KubeRay thi can cai helm de script install operator
-
-# Build image kem model trong image
-PRELOAD_MODEL=true ./scripts/deploy.sh
-
-# Dung registry rieng thay vi image local trong Minikube
-IMAGE=registry.example.com/mlops/llm-chat-ray:0.1.0 PUSH_IMAGE=true LOAD_IMAGE=none ./scripts/deploy.sh
-```
-
-Neu gap loi `missing command: helm`, co 2 cach:
-
-```bash
-# Cach 1: KubeRay da cai san trong cluster
-INSTALL_KUBERAY=false ./scripts/deploy.sh
-
-# Cach 2: cai Helm truoc, roi chay lai script
-./scripts/deploy.sh
-```
-
-## Autoscaling
-
-`k8s/rayservice.yaml` co hai lop scale:
-
-- Ray Serve scale model replicas theo request dang xu ly:
-  - `target_ongoing_requests: 1`
-  - `max_ongoing_requests: 1` (1 request/replica/luot — chua bat batching)
-  - `min_replicas: 1`
-  - `max_replicas: 3`
-- Ray cluster scale worker pods khi Serve can them CPU:
-  - worker group `minReplicas: 1`
-  - `maxReplicas: 3`
-  - moi model replica dung `num_cpus: 3`
-
-Test tai dong thoi (load_test moi co warmup, p99, throughput, replica distribution, JSON output):
-
-```bash
-mkdir -p reports
-python scripts/load_test.py \
-  --url http://127.0.0.1:8000/chat \
-  --concurrency 8 --requests 24 --warmup 2 --max-new-tokens 64 \
-  --output reports/load-$(date +%Y%m%d-%H%M%S).json
-
-# Theo doi pod song song:
-kubectl -n llm-chat get pods -w
-```
-
-## Tuy chinh nhanh
-
-Sua env trong `k8s/rayservice.yaml`:
-
-- `MODEL_ID`: model Hugging Face compatible causal LM.
-- `MODEL_DTYPE`: `bfloat16` (mac dinh, nhanh tren CPU x86 moi) | `float32` | `float16`.
-- `ENABLE_THINKING`: `false` de tat thinking mode cua Qwen3.
-- `MAX_NEW_TOKENS`: gioi han token sinh ra mac dinh.
-- `MAX_INPUT_TOKENS`: gioi han do dai prompt truoc khi truncate.
-- `TORCH_NUM_THREADS`: so CPU thread moi replica dung.
-- `MODEL_NUM_CPUS`: CPU Ray cap cho moi replica.
-- `MAX_ONGOING_REQUESTS`: so request mot replica chap nhan dong thoi (mac dinh 1).
-
-Model CPU lon hon se can tang memory request/limit cho worker pod.
-
-## Cai thien
-
-Xem `IMPROVEMENTS.md` cho review chi tiet va cac fix con lai (streaming SSE, dynamic batching, observability, security).
+For stable demos, use on-demand GPU or the stable profile described in `docs/rag-technical-design.md`.

@@ -12,41 +12,44 @@ spec:
   serviceUnhealthySecondThreshold: 900
   deploymentUnhealthySecondThreshold: 300
   serveConfigV2: |
-    proxy_location: EveryNode
+    proxy_location: HeadOnly
     http_options:
       host: 0.0.0.0
       port: 8000
     applications:
       - name: llm-chat
-        import_path: app.server:chat_app
+        import_path: app.rag_server:rag_app
         route_prefix: /
         deployments:
-          - name: ChatModel
-            max_ongoing_requests: 1
-            autoscaling_config:
-              min_replicas: 1
-              initial_replicas: 1
-              max_replicas: 3
-              target_ongoing_requests: 1
-              upscale_delay_s: 10
-              downscale_delay_s: 120
+          - name: RagApi
+            num_replicas: 1
+            max_ongoing_requests: 32
             ray_actor_options:
-              num_cpus: 3
+              num_cpus: 0.2
+          - name: Embedder
+            num_replicas: 1
+            max_ongoing_requests: 8
+            ray_actor_options:
+              num_cpus: 0.5
   rayClusterConfig:
     rayVersion: "2.55.1"
-    enableInTreeAutoscaling: true
-    autoscalerOptions:
-      upscalingMode: Default
-      idleTimeoutSeconds: 120
+    enableInTreeAutoscaling: false
     headGroupSpec:
       rayStartParams:
         dashboard-host: "0.0.0.0"
-        num-cpus: "0"
+        num-cpus: "1.5"
       template:
         spec:
+          nodeSelector:
+            node-type: head
+          tolerations:
+            - key: ray-role
+              operator: Equal
+              value: head
+              effect: NoSchedule
           containers:
             - name: ray-head
-              image: llm-chat-ray:0.1.0
+              image: __APP_IMAGE__
               imagePullPolicy: IfNotPresent
               ports:
                 - containerPort: 6379
@@ -57,83 +60,41 @@ spec:
                   name: client
                 - containerPort: 8000
                   name: serve
+                - containerPort: 8080
+                  name: metrics
               env:
-                - name: MODEL_ID
-                  value: Qwen/Qwen3-0.6B
-                - name: MODEL_DTYPE
-                  value: bfloat16
-                - name: ENABLE_THINKING
-                  value: "false"
-                - name: MAX_NEW_TOKENS
-                  value: "160"
-                - name: MAX_INPUT_TOKENS
-                  value: "2048"
-                - name: TORCH_NUM_THREADS
-                  value: "3"
-                - name: MODEL_NUM_CPUS
-                  value: "3"
-                - name: MAX_ONGOING_REQUESTS
-                  value: "1"
                 - name: GRPC_DNS_RESOLVER
                   value: native
                 - name: HF_HOME
                   value: /tmp/huggingface
+                - name: EMBEDDER_MODEL_PATH
+                  value: /models/embedder-onnx-int8
+                - name: EMBEDDER_MODEL_ID
+                  value: intfloat/multilingual-e5-small
+                - name: EMBEDDER_NUM_THREADS
+                  value: "1"
+                - name: EMBEDDER_NUM_CPUS
+                  value: "0.5"
+                - name: RAG_API_NUM_CPUS
+                  value: "0.2"
               resources:
                 requests:
-                  cpu: "2"
-                  memory: 4Gi
+                  cpu: "1200m"
+                  memory: 3Gi
                 limits:
-                  cpu: "3"
-                  memory: 6Gi
+                  cpu: "1800m"
+                  memory: 5Gi
+              readinessProbe:
+                httpGet:
+                  path: /api/healthz
+                  port: 52365
+                initialDelaySeconds: 20
+                periodSeconds: 10
+                timeoutSeconds: 5
+                failureThreshold: 3
               volumeMounts:
                 - name: hf-cache
                   mountPath: /tmp/huggingface
           volumes:
             - name: hf-cache
               emptyDir: {}
-    workerGroupSpecs:
-      - groupName: cpu-workers
-        minReplicas: 1
-        maxReplicas: 3
-        rayStartParams: {}
-        template:
-          spec:
-            terminationGracePeriodSeconds: 60
-            containers:
-              - name: ray-worker
-                image: llm-chat-ray:0.1.0
-                imagePullPolicy: IfNotPresent
-                env:
-                  - name: MODEL_ID
-                    value: Qwen/Qwen3-0.6B
-                  - name: MODEL_DTYPE
-                    value: bfloat16
-                  - name: ENABLE_THINKING
-                    value: "false"
-                  - name: MAX_NEW_TOKENS
-                    value: "160"
-                  - name: MAX_INPUT_TOKENS
-                    value: "2048"
-                  - name: TORCH_NUM_THREADS
-                    value: "3"
-                  - name: MODEL_NUM_CPUS
-                    value: "3"
-                  - name: MAX_ONGOING_REQUESTS
-                    value: "1"
-                  - name: GRPC_DNS_RESOLVER
-                    value: native
-                  - name: HF_HOME
-                    value: /tmp/huggingface
-                resources:
-                  requests:
-                    cpu: "3"
-                    memory: 4Gi
-                  limits:
-                    cpu: "4"
-                    memory: 6Gi
-                volumeMounts:
-                  - name: hf-cache
-                    mountPath: /tmp/huggingface
-            volumes:
-              - name: hf-cache
-                emptyDir: {}

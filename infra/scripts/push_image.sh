@@ -6,7 +6,7 @@
 # Inputs (env, all optional):
 #   ENV          environments/<env>/persistent — defaults to dev
 #   IMAGE_TAG    image tag — defaults to short git SHA (then "dev" if no git)
-#   DOCKERFILE   path to Dockerfile — defaults to Dockerfile.app, falls back to Dockerfile
+#   DOCKERFILE   path to Dockerfile — defaults to Dockerfile.app
 #   DOCKER_CMD   docker | podman — autodetect
 #   IMAGE_PLATFORM  linux/amd64 (always; head + GPU are both x86 in rev3+)
 #   ROLL         "true" to kubectl delete pods after push (default: true)
@@ -26,15 +26,13 @@ IMAGE_PLATFORM="${IMAGE_PLATFORM:-linux/amd64}"
 NAMESPACE="${NAMESPACE:-llm-chat}"
 ROLL="${ROLL:-true}"
 
-# Pick the right Dockerfile. Prefer Dockerfile.app once it exists (P2 onward
-# introduces it). Fallback to legacy chat-only Dockerfile so this script keeps
-# working during the migration window.
 if [[ -z "${DOCKERFILE:-}" ]]; then
-  if [[ -f "${ROOT_DIR}/Dockerfile.app" ]]; then
-    DOCKERFILE="${ROOT_DIR}/Dockerfile.app"
-  else
-    DOCKERFILE="${ROOT_DIR}/Dockerfile"
-  fi
+  DOCKERFILE="${ROOT_DIR}/Dockerfile.app"
+fi
+
+if [[ ! -f "${DOCKERFILE}" ]]; then
+  echo "Dockerfile not found: ${DOCKERFILE}" >&2
+  exit 1
 fi
 
 # Image tag: prefer caller-supplied IMAGE_TAG, else short git SHA, else "dev".

@@ -1,194 +1,78 @@
-# Infra — AWS EKS + KubeRay for the LLM chat app
+# Infra
 
-Terraform stack for a CPU-only Ray Serve LLM chat deployment on EKS.
+The dev environment is split into two Terraform stacks. This is intentional:
 
-## Layout
-
-```
-infra/
-├── bootstrap/                   # ONE-TIME stack: S3 state bucket + DDB lock + GH OIDC role
-│   ├── versions.tf
-│   ├── main.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   └── terraform.tfvars.example
-├── environments/                # LIVE config — one dir per env
-│   └── dev/
-│       ├── versions.tf
-│       ├── providers.tf
-│       ├── backend.tf.example   # filled in after bootstrap
-│       ├── variables.tf
-│       ├── main.tf              # composes modules
-│       ├── outputs.tf
-│       └── terraform.tfvars.example
-├── modules/                     # REUSABLE — no env-specific defaults
-│   ├── network/                 # VPC (2 AZ control plane + 1 AZ workers + 1 NAT)
-│   ├── ecr/                     # ECR repo + lifecycle policy
-│   ├── eks/                     # EKS cluster + MNG (wraps terraform-aws-modules)
-│   ├── kuberay/                 # KubeRay operator (Helm) + RayService (kubectl) + PDB
-│   ├── observability/           # kube-prometheus-stack + Ray ServiceMonitor + Grafana dashboard
-│   └── cost/                    # AWS Budget + tag-based filter + email alerts
-├── scripts/
-│   └── push_image.sh            # build + ECR login + push + roll pods
-└── README.md                    # this file
+```text
+infra/environments/dev/persistent/   # create once, keep
+infra/environments/dev/ephemeral/    # create/destroy per lab session
 ```
 
-Each module has its own `versions.tf`, `README.md`, `variables.tf`,
-`outputs.tf` and `main.tf` so it drops into another repo without changes.
-
-## First-time setup
+## What To Run
 
 ```bash
-# 1. bootstrap (creates state bucket + DDB + GH OIDC role, uses local state)
-cd infra/bootstrap
-cp terraform.tfvars.example terraform.tfvars
-# edit: set github_repository = "your-org/your-repo" if using CI/CD
-terraform init
-terraform apply
-terraform output -raw backend_config   # copy into next step
+cd infra
 
-# 2. wire backend for dev env
-cd ../environments/dev
-cp backend.tf.example backend.tf
-# replace <ACCOUNT_ID> with `aws sts get-caller-identity --query Account --output text`
-cp terraform.tfvars.example terraform.tfvars
-# edit knobs as desired
-terraform init   # migrates state to S3
+# One-time bootstrap
+make persistent-init
+make persistent-apply
 
-# 3. apply
-terraform apply
+# Daily lab session
+make cluster-up
+make push
+make qdrant-up
+make vllm-up
+make rag-up
+make rag-pf
+
+# Save money after the session
+make cluster-down
 ```
 
-## Add a new environment
+## Stack Ownership
+
+| Stack | Owns | Destroy daily? |
+| --- | --- | --- |
+| `persistent` | VPC, ECR app repo, S3 data bucket, EBS Qdrant, EBS LLM cache, optional GitHub OIDC | No |
+| `ephemeral` | EKS, head MNG, GPU MNG, NVIDIA device plugin, namespace, PV/PVC bindings | Yes |
+| K8s manifests | Qdrant, vLLM, RayService app | Delete/reapply as needed |
+
+`make cluster-down` destroys only the ephemeral stack. It does not delete ECR images, S3 files, Qdrant data, or the LLM cache volume.
+
+## Runtime Split
+
+```text
+Ray/KubeRay:
+  - API/RAG handler
+  - ONNX INT8 embedder
+
+Qdrant:
+  - Vector storage
+  - Persistent EBS volume
+
+vLLM:
+  - GPU LLM inference
+  - Upstream vllm-openai image
+  - Persistent EBS HF cache
+```
+
+The app image is built from `Dockerfile.app` and pushed to the persistent ECR repo. The LLM server image is not built locally; Kubernetes pulls the upstream vLLM image.
+
+## Useful Commands
 
 ```bash
-cp -r environments/dev environments/staging
-# edit environments/staging/terraform.tfvars + backend.tf
-cd environments/staging
-terraform init && terraform apply
+make cluster-status
+make cluster-output
+make qdrant-status
+make vllm-logs
+make rag-logs
 ```
 
-## Prereqs
-
-- AWS account + admin-ish creds (`aws sts get-caller-identity` works).
-- Tools: `terraform >= 1.6`, `aws` v2, `kubectl >= 1.30`, `docker` or `podman`.
-- Quota in the target region: 1 EKS cluster, 1 NAT gateway, 1 EIP, 2..4
-  `m7g.xlarge` instances, or the x86/ARM instance type you choose.
-
-## Deploy
+Port forwards:
 
 ```bash
-cd environments/dev
-cp terraform.tfvars.example terraform.tfvars   # edit region, sizes, model, ...
-terraform init
-terraform apply
+make rag-pf       # localhost:8000 -> Ray Serve API
+make qdrant-pf    # localhost:6333 -> Qdrant
+make vllm-pf      # localhost:8000 -> vLLM direct debug
 ```
 
-One `terraform apply` is enough — `kubectl_manifest` defers API calls to
-apply time, so no two-phase apply is needed.
-
-Apply runs ~15-20 minutes (most of it is the EKS control plane).
-
-## Access
-
-```bash
-cd environments/dev
-$(terraform output -raw kubeconfig_command)   # writes ~/.kube/config entry
-
-kubectl -n kuberay-system get pods            # operator should be Running
-kubectl -n llm-chat get rayservice,pods,svc   # cluster pods come up
-```
-
-## Push the image
-
-The cluster comes up with `ImagePullBackOff` until you push the app image to
-ECR (the ECR repo is created empty by Terraform).
-
-```bash
-IMAGE_PLATFORM=linux/arm64 infra/scripts/push_image.sh  # ENV=dev default for Graviton
-# or for another env:
-ENV=staging IMAGE_PLATFORM=linux/arm64 infra/scripts/push_image.sh
-```
-
-The script:
-
-1. Reads `region`, `ecr_repository_url`, `model_id`, `image_tag` from
-   `terraform output` of `environments/${ENV}/`.
-2. `docker login` to ECR.
-3. `docker buildx build --platform linux/arm64 --push` when `IMAGE_PLATFORM`
-   is set, with `PRELOAD_MODEL=true` by default.
-4. Pushes the image to ECR.
-5. `kubectl delete pod --all --force` to roll the RayService onto the new
-   image.
-
-After ~3-5 minutes pods become Ready.
-
-## Use the chat UI
-
-```bash
-cd environments/dev
-$(terraform output -raw port_forward_command)
-# Open http://127.0.0.1:8000
-```
-
-## Iterate
-
-```bash
-# Edit app/server.py, then:
-IMAGE_TAG=0.1.1 infra/scripts/push_image.sh
-```
-
-Manifest tag is controlled by `image_tag` variable — to force pods to a new
-tag without re-applying TF just push the same tag and run the script.
-
-## Cost (approx, us-west-2 on-demand, 24×7)
-
-| Item | $/month |
-| --- | --- |
-| EKS control plane | $73 |
-| 2 × m7g.xlarge (4 vCPU/16 Gi each) | ~$235 ($0.1632/h × 2) |
-| NAT GW (single) | $33 + data |
-| EIP | $0 (attached) |
-| ECR storage | ~$1 |
-| Observability (when `enable_observability=true`, fits in spare node capacity) | $0 extra direct, may force +1 node if cluster is tight |
-| **Total at steady state** | **~$340/month** |
-
-Single-node mode (1 × m7g.xlarge, `node_desired_size=1`): ~$225/month.
-
-Paused (`node_desired_size=0`): ~$110/month (EKS + NAT only).
-
-To pause without destroying:
-
-```bash
-cd environments/dev
-terraform apply -var node_desired_size=0   # scales the MNG to zero
-```
-
-To tear everything down:
-
-```bash
-terraform destroy
-```
-
-## Tuning highlights
-
-| Variable | Effect |
-| --- | --- |
-| `node_instance_types` | Default `m7g.xlarge` for cheap Graviton ARM CPU. Use `m7g.2xlarge` for steadier concurrent tests, or `m6i.xlarge/m6i.2xlarge` if you want x86 image builds. |
-| `node_capacity_type` | `ON_DEMAND` default; `SPOT` cuts ~70%. |
-| `node_min_size` / `_desired` / `_max` | MNG autoscale bounds. |
-| `ray_replica_max` | Ray Serve max replicas. |
-| `ray_replica_cpus` | CPU each Ray Serve replica reserves. |
-| `model_id` | Default `Qwen/Qwen3-0.6B` with thinking disabled in the app. |
-
-## Notes
-
-- Graviton nodes need an ARM64 or multi-arch image. Build/push with
-  `IMAGE_PLATFORM=linux/arm64 PRELOAD_MODEL=true ./infra/scripts/push_image.sh`.
-- `t3/t3a` are **burstable**. Sustained load tests burn CPU credits and can
-  throttle, so avoid them for model latency benchmarks.
-- Workers are in a single AZ to keep cost low. For production set
-  `node_subnet_ids` (in `modules/eks/main.tf`) to all private subnets and
-  remove `single_nat_gateway` in `modules/network/main.tf`.
-- Remote state: copy `environments/dev/backend.tf.example` to `backend.tf`
-  and adjust before `terraform init` if you want shared state.
+Do not run bare `terraform destroy` from `infra/environments/dev/persistent/` unless you intentionally want to remove retained data and have first removed `prevent_destroy` guards.

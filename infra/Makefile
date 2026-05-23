@@ -1,7 +1,8 @@
 .PHONY: help init plan apply destroy fmt validate output push roll \
         persistent-init persistent-plan persistent-apply persistent-output \
         cluster-up cluster-down cluster-status cluster-output \
-        qdrant-up qdrant-down qdrant-logs qdrant-pf qdrant-status qdrant-init
+        qdrant-up qdrant-down qdrant-logs qdrant-pf qdrant-status qdrant-init \
+        kuberay-up rag-up rag-down rag-logs rag-pf embed-bench
 
 # ENV defaults to dev. ENV_DIR can be overridden to point at persistent/
 # or ephemeral/ sub-stacks via STACK=persistent|ephemeral|"".
@@ -176,3 +177,52 @@ qdrant-status: ## show Qdrant pod + PVC + collection stats (requires port-forwar
 	@kubectl get pv qdrant-data-pv 2>/dev/null || echo "(no pv)"
 	@echo "--- Collections (needs port-forward on :6333) ---"
 	@curl -sf http://localhost:6333/collections 2>/dev/null | python3 -m json.tool || echo "(port-forward not running)"
+
+###############################################################################
+# P4 — RAG API + CPU Embedder on Ray head.
+###############################################################################
+.PHONY: kuberay-up rag-up rag-down rag-logs rag-pf embed-bench
+
+KUBERAY_VERSION ?= 1.6.1
+RAG_MANIFEST := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))/../k8s/rayservice.yaml
+
+kuberay-up: ## install/upgrade KubeRay operator (required by rag-up)
+	helm upgrade --install kuberay-operator kuberay-operator \
+		--repo https://ray-project.github.io/kuberay-helm/ \
+		--version $(KUBERAY_VERSION) \
+		--namespace kuberay-system \
+		--create-namespace
+
+rag-up: kuberay-up ## deploy RayService for RAG API + Embedder (run 'make push' first)
+	@IMAGE_TAG=$${IMAGE_TAG:-$$(git -C .. rev-parse --short HEAD 2>/dev/null || echo dev)}; \
+	 ECR_URL=$$(terraform -chdir=environments/$(ENV)/persistent output -raw ecr_app_url 2>/dev/null); \
+	 [ -n "$$ECR_URL" ] || { echo "ERROR: could not read ecr_app_url from persistent stack — run 'make persistent-apply' first"; exit 1; }; \
+	 APP_IMAGE=$${APP_IMAGE:-$$ECR_URL:$$IMAGE_TAG}; \
+	 REPO_NAME=$$(echo "$$ECR_URL" | sed 's|.*/||'); \
+	 REGION=$$(terraform -chdir=environments/$(ENV)/persistent output -raw region 2>/dev/null || echo us-west-2); \
+	 aws ecr describe-images --repository-name "$$REPO_NAME" \
+	   --image-ids "imageTag=$$IMAGE_TAG" \
+	   --region "$$REGION" > /dev/null 2>&1 \
+	   || { echo "ERROR: $$APP_IMAGE not found in ECR — run 'make push' first"; exit 1; }; \
+	 echo "==> Applying RAG RayService with image $$APP_IMAGE"; \
+	 sed "s|__APP_IMAGE__|$$APP_IMAGE|g" "$(RAG_MANIFEST)" | kubectl apply -f -
+	@echo "==> Monitor startup:"
+	@echo "    kubectl -n $(NS) get rayservice,pods -w"
+	@echo "==> Then port-forward and bench:"
+	@echo "    make -C infra rag-pf"
+	@echo "    make -C infra embed-bench"
+
+rag-down: ## delete app RayService (keeps Qdrant/vLLM/data)
+	kubectl -n $(NS) delete rayservice llm-chat --ignore-not-found
+
+rag-logs: ## tail Ray head logs for the RAG app
+	kubectl -n $(NS) logs -f -l ray.io/cluster=llm-chat,ray.io/node-type=head -c ray-head --tail=200
+
+rag-pf: ## port-forward 8000:8000 to RAG API (blocking)
+	kubectl -n $(NS) port-forward svc/llm-chat-serve-svc 8000:8000
+
+embed-bench: ## run /embed smoke benchmark (requires rag-pf)
+	python3 ../scripts/bench_embedder.py \
+		--base-url http://localhost:8000 \
+		--batches 1,32 \
+		--requests 20

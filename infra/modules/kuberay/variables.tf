@@ -29,119 +29,26 @@ variable "ray_version" {
 }
 
 variable "image" {
-  description = "Container image for Ray head/worker (ECR URL + tag)"
+  description = "Container image for the Ray head app pod (ECR URL + tag)"
   type        = string
-}
-
-variable "model_id" {
-  description = "Hugging Face model id (used by Transformers backend + UI label)"
-  type        = string
-}
-
-variable "model_dtype" {
-  description = "PyTorch dtype (Transformers backend only). Ignored by llamacpp."
-  type        = string
-  default     = "bfloat16"
-}
-
-variable "inference_backend" {
-  description = "llamacpp (default, Q4_K_M on CPU) or transformers (bf16 fallback)"
-  type        = string
-  default     = "llamacpp"
-  validation {
-    condition     = contains(["llamacpp", "transformers"], var.inference_backend)
-    error_message = "inference_backend must be 'llamacpp' or 'transformers'."
-  }
-}
-
-variable "gguf_repo_id" {
-  description = "HF repo holding the GGUF file (llamacpp only)"
-  type        = string
-  default     = "bartowski/Qwen_Qwen3-0.6B-GGUF"
-}
-
-variable "gguf_filename" {
-  description = "GGUF file name inside gguf_repo_id (llamacpp only)"
-  type        = string
-  default     = "Qwen_Qwen3-0.6B-Q4_K_M.gguf"
-}
-
-variable "llama_n_ctx" {
-  description = "llama.cpp context size in tokens"
-  type        = number
-  default     = 2048
-}
-
-variable "llama_n_batch" {
-  description = "llama.cpp prompt batch size"
-  type        = number
-  default     = 128
-}
-
-variable "max_replicas" {
-  description = "Ray Serve max ACTOR count (not pod count). Ray packs multiple actors per pod when possible."
-  type        = number
-  default     = 4
-}
-
-variable "min_replicas" {
-  description = "Ray Serve min ACTOR count (HA baseline)"
-  type        = number
-  default     = 2
-}
-
-variable "replica_cpus" {
-  description = "CPU each Ray Serve actor reserves (Ray's num_cpus)"
-  type        = number
-  default     = 1.5
-}
-
-variable "actors_per_pod" {
-  description = <<-EOT
-    How many Ray Serve actors fit into one worker pod.
-    Computed from worker_cpu_limit / replica_cpus (e.g. 3 / 1.5 = 2).
-    Used to translate actor min/max into pod min/max for KubeRay.
-  EOT
-  type        = number
-  default     = 2
 }
 
 variable "head_cpu_request" {
   type    = string
-  default = "1"
+  default = "1200m"
 }
 
 variable "head_cpu_limit" {
   type    = string
-  default = "2"
+  default = "1800m"
 }
 
 variable "head_memory_request" {
   type    = string
-  default = "2Gi"
+  default = "3Gi"
 }
 
 variable "head_memory_limit" {
   type    = string
-  default = "3Gi"
-}
-
-variable "worker_cpu_request" {
-  type    = string
-  default = "3"
-}
-
-variable "worker_cpu_limit" {
-  type    = string
-  default = "3500m"
-}
-
-variable "worker_memory_request" {
-  type    = string
-  default = "4Gi"
-}
-
-variable "worker_memory_limit" {
-  type    = string
-  default = "6Gi"
+  default = "5Gi"
 }

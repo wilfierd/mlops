@@ -3,6 +3,10 @@
 Installs `kube-prometheus-stack` (Prometheus + Grafana + kube-state-metrics +
 node-exporter + CRDs) and wires Ray Serve metrics into it.
 
+Status: P8 draft. This module is not wired into the default `dev/ephemeral`
+stack yet. Before enabling it, update dashboards for the RAG/vLLM metrics and
+schedule it on a dedicated `ops` node so it does not compete with the Ray head.
+
 ## What you get
 
 - **Prometheus** scraping every K8s `ServiceMonitor` cluster-wide. Default
@@ -75,5 +79,5 @@ mount it in `main.tf` as another `kubernetes_config_map` with label
 | node-exporter (DaemonSet) | 50Mi/node | 10m/node |
 | Operator | 100Mi | 100m |
 
-≈ 1Gi memory total + ~1 CPU. Fits in spare capacity of a single t3.xlarge or
-m7g.xlarge node.
+≈ 1Gi memory total + ~1 CPU. For the RAG cost-first profile, run this on the
+optional `ops` node from P8 instead of packing it onto the `m6i.large` head.

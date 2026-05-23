@@ -6,10 +6,11 @@ rewrite — supersede instead.
 | # | Title | Status |
 | --- | --- | --- |
 | 001 | [Ray Serve via KubeRay](001-ray-serve-on-kuberay.md) | accepted |
-| 002 | [ARM Graviton nodes](002-graviton-arm-nodes.md) | accepted |
+| 002 | [ARM Graviton nodes](002-graviton-arm-nodes.md) | superseded by 006 |
 | 003 | [Single-AZ worker placement](003-single-az-workers.md) | accepted |
 | 004 | [kubectl_manifest over kubernetes_manifest](004-kubectl-manifest-over-kubernetes-manifest.md) | accepted |
 | 005 | [GitHub Actions OIDC, no static AWS keys](005-github-actions-oidc-no-static-keys.md) | accepted |
+| 006 | [GPU RAG pivot](006-gpu-rag-pivot.md) | accepted |
 
 ## Format
 

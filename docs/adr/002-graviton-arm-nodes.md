@@ -1,6 +1,6 @@
 # 002 — ARM Graviton (m7g) over Intel for worker nodes
 
-Status: accepted
+Status: superseded by 006
 Date: 2026-05-15
 
 ## Context
@@ -33,6 +33,8 @@ t3.xlarge but the real win is no credit-throttle risk under sustained load.
 
 ## Consequences
 
+- Superseded for the RAG path by ADR 006. Keep this ADR only as history for
+  the earlier CPU-only chat prototype.
 - Image must be built for `linux/arm64` (`docker buildx --platform`).
 - CI on `ubuntu-latest` (x86) cross-builds via QEMU — ~10x slower than
   native ARM build. Acceptable for lab (~10-15 min per push).

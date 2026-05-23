@@ -25,3 +25,9 @@ output "public_subnet_ids" {
 output "private_subnet_ids" {
   value = module.vpc.private_subnets
 }
+
+# Single AZ where the worker MNG (and matching EBS volumes) must live.
+output "worker_az" {
+  value       = var.worker_az
+  description = "AZ where worker nodes + EBS volumes (qdrant-data, llm-cache) live"
+}

@@ -28,3 +28,15 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "enable_nat_gateway" {
+  description = "Create a NAT gateway for private subnets. Set false for lab mode (saves ~$33/mo; workloads must run in public subnet OR rely on VPC endpoints)."
+  type        = bool
+  default     = true
+}
+
+variable "workers_in_public_subnet" {
+  description = "Lab-mode trade-off: when true, persistent stack still tags PUBLIC subnets with kubernetes.io/role/internal-elb so worker MNGs in the ephemeral stack can run in public subnets. Combine with enable_nat_gateway=false to avoid NAT cost."
+  type        = bool
+  default     = false
+}

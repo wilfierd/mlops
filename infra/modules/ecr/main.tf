@@ -12,6 +12,12 @@ resource "aws_ecr_repository" "this" {
   }
 
   tags = var.tags
+
+  # ECR is a persistent resource by nature — images survive cluster destroy.
+  # To intentionally destroy: remove this lifecycle block, then `terraform apply`.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_ecr_lifecycle_policy" "this" {

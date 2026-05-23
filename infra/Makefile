@@ -1,6 +1,7 @@
 .PHONY: help init plan apply destroy fmt validate output push roll \
         persistent-init persistent-plan persistent-apply persistent-output \
-        cluster-up cluster-down cluster-status cluster-output
+        cluster-up cluster-down cluster-status cluster-output \
+        qdrant-up qdrant-down qdrant-logs qdrant-pf qdrant-status qdrant-init
 
 # ENV defaults to dev. ENV_DIR can be overridden to point at persistent/
 # or ephemeral/ sub-stacks via STACK=persistent|ephemeral|"".
@@ -132,3 +133,46 @@ vllm-bench: ## run scripts/bench_vllm.py against localhost:8000 (port-forward fi
 		--prompt-tokens 3000 \
 		--new-tokens 200 \
 		--out ../reports/p2-vllm-bench.md
+
+###############################################################################
+# P3 — Qdrant collocate on head node.
+###############################################################################
+.PHONY: qdrant-up qdrant-down qdrant-logs qdrant-pf qdrant-status
+
+QDRANT_MANIFEST := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))/../k8s/qdrant.yaml
+
+qdrant-up: ## deploy Qdrant StatefulSet + headless Service + init collection schema
+	kubectl apply -f $(QDRANT_MANIFEST)
+	@echo "==> Waiting for qdrant-0 Ready..."
+	kubectl -n $(NS) wait --for=condition=Ready pod/qdrant-0 --timeout=120s
+	@echo "==> Init 'documents' collection schema (idempotent)..."
+	$(MAKE) qdrant-init
+	@echo "==> Done. Port-forward to inspect:"
+	@echo "    make qdrant-pf &"
+	@echo "    curl -s http://localhost:6333/collections"
+
+qdrant-down: ## delete Qdrant StatefulSet + Service (keeps qdrant-data-pvc + EBS data)
+	kubectl delete -f $(QDRANT_MANIFEST) --ignore-not-found
+
+qdrant-logs: ## tail qdrant-0 logs
+	kubectl -n $(NS) logs -f qdrant-0
+
+qdrant-pf: ## port-forward 6333:6333 + 6334:6334 to qdrant-0 (blocking)
+	kubectl -n $(NS) port-forward pod/qdrant-0 6333:6333 6334:6334
+
+qdrant-init: ## create/verify 'documents' collection schema (idempotent; opens temp port-forward)
+	@kubectl -n $(NS) port-forward pod/qdrant-0 6333:6333 & PF_PID=$$!; \
+	 sleep 2; \
+	 python3 ../scripts/qdrant_init.py; RC=$$?; \
+	 kill $$PF_PID 2>/dev/null || true; \
+	 exit $$RC
+
+qdrant-status: ## show Qdrant pod + PVC + collection stats (requires port-forward)
+	@echo "--- Pod ---"
+	@kubectl -n $(NS) get pod qdrant-0 -o wide 2>/dev/null || echo "(not deployed)"
+	@echo "--- PVC ---"
+	@kubectl -n $(NS) get pvc qdrant-data-pvc 2>/dev/null || echo "(no pvc)"
+	@echo "--- PV ---"
+	@kubectl get pv qdrant-data-pv 2>/dev/null || echo "(no pv)"
+	@echo "--- Collections (needs port-forward on :6333) ---"
+	@curl -sf http://localhost:6333/collections 2>/dev/null | python3 -m json.tool || echo "(port-forward not running)"

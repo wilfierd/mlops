@@ -1,0 +1,116 @@
+# Qdrant StatefulSet — collocate on head node (rev5 cost-first).
+#
+# Node:      m6i.large head (node-type=head, taint ray-role=head:NoSchedule)
+# Resources: 200m/512Mi request → 500m/1.5Gi limit (MVP scale ≤ 100K vectors)
+# Storage:   /qdrant/storage → qdrant-data-pvc → EBS vol-XXXX (persistent stack)
+#            PVC pre-created by ephemeral Terraform stack (k8s.tf).
+#            Do NOT add volumeClaimTemplates — PVC already exists and binds the
+#            retained EBS volume, so data survives cluster destroy/recreate.
+#
+# Deploy after `make cluster-up`:
+#   kubectl apply -f k8s/qdrant.yaml
+#
+# Or via Makefile:
+#   make -C infra qdrant-up
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: llm-chat
+  labels:
+    app.kubernetes.io/name: qdrant
+spec:
+  # Headless so pod DNS resolves:
+  # qdrant-0.qdrant.llm-chat.svc.cluster.local
+  # Embedder/QA actors connect via gRPC on :6334 or HTTP on :6333.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: qdrant
+  ports:
+    - name: http
+      port: 6333
+      targetPort: 6333
+    - name: grpc
+      port: 6334
+      targetPort: 6334
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+  namespace: llm-chat
+  labels:
+    app.kubernetes.io/name: qdrant
+spec:
+  serviceName: qdrant
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: qdrant
+    spec:
+      # Collocate on head node. Head carries ray-role=head:NoSchedule taint
+      # (set by KubeRay) so we must explicitly tolerate it.
+      nodeSelector:
+        node-type: head
+      tolerations:
+        - key: ray-role
+          operator: Equal
+          value: head
+          effect: NoSchedule
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.11.3
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 6333
+            - name: grpc
+              containerPort: 6334
+          env:
+            - name: QDRANT__LOG_LEVEL
+              value: INFO
+            - name: QDRANT__SERVICE__GRPC_PORT
+              value: "6334"
+            # Keep segment count low on MVP — avoids background merge CPU spikes
+            # on m6i.large where CPU is shared with Ray head.
+            - name: QDRANT__STORAGE__OPTIMIZERS__DEFAULT_SEGMENT_NUMBER
+              value: "2"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1536Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /qdrant/storage
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 6333
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 6333
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+      # Reference the pre-created PVC (provisioned by ephemeral k8s.tf).
+      # volumeClaimTemplates deliberately omitted — PVC already bound to the
+      # retained EBS volume; adding VCT here would create a duplicate PVC.
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: qdrant-data-pvc

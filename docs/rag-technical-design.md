@@ -502,6 +502,12 @@ Payload mỗi point:
 
 ### 3.3 Ingestion pipeline
 
+> **Durability caveat (rev 2):** ingest job dùng Ray Task — **không durable**. Nếu cluster destroy (hoặc Ray head pod crash) giữa lúc ingest, job mất, doc kẹt ở `status=processing` mãi.
+>
+> - **MVP OK**: doc ingest mất < 60s; user re-upload là re-trigger từ đầu vì `doc_id` (SHA-256) trùng → idempotent.
+> - **Production cần**: SQS queue + worker pool consume + DynamoDB job table, hoặc dùng Ray Workflows (durable). Out of scope cho MVP. Plan riêng nếu scale > 100 docs/ngày.
+> - **Workaround MVP**: cron job mỗi 10 min scan S3 meta cho `status=processing` quá 5 min → mark `failed` (cleanup partial Qdrant chunks bằng filter `doc_id`).
+
 #### 3.3.1 Flow
 
 ```
@@ -824,56 +830,61 @@ async def generate_answer(messages: list[dict]) -> str:
 
 > **Streaming** (Phase 2): client dùng `stream=True`, vllm-openai trả SSE; FastAPI proxy lại thành SSE cho browser.
 
-#### 3.5.5 Generation params cho RAG
+#### 3.5.5 Generation params cho RAG (gọi qua OpenAI API)
 
 ```python
-SamplingParams(
-    temperature=0.2,            # RAG cần xác định, không creative
-    top_p=0.85,
-    top_k=20,
-    repetition_penalty=1.05,
-    max_tokens=400,
-    stop=["<|im_end|>", "<|endoftext|>", "\n\nCÂU HỎI:"],
-)
+# QA handler dùng OpenAI SDK, params equivalent với vllm SamplingParams
+{
+    "temperature": 0.2,            # RAG cần xác định, không creative
+    "top_p": 0.85,
+    "max_tokens": 400,
+    "frequency_penalty": 0.05,
+    "stop": ["<|im_end|>", "<|endoftext|>", "\n\nCÂU HỎI:"],
+}
 ```
 
-#### 3.5.6 Docker image GPU
+#### 3.5.6 Docker images (rev 2 — official + app proxy)
 
+**Image 1: vLLM server** — KHÔNG tự build. Dùng official:
+```
+docker pull vllm/vllm-openai:latest-stable   # ~7 GiB; CUDA 12.1, torch 2.x, vLLM mới nhất stable
+```
+
+Pin version cụ thể (tag immutable) khi deploy production. Lý do dùng official:
+- vLLM thay đổi nhanh; tự build dễ dính `torch + flash-attn + autoawq` version mismatch.
+- Official image đã test pass cho AWQ + Marlin + FP8 KV trên Ampere/Ada.
+- Bao gồm sẵn `/v1/chat/completions`, `/health`, `/metrics` (Prometheus).
+
+Pre-download model: dùng **PVC `llm-cache-pvc`** (xem §4.3 persistent EBS) — vllm-openai sẽ tải về lần đầu qua HF Hub, lần sau đọc từ EBS. KHÔNG bake model vào image (giữ image nhỏ, tránh ECR pull 12 GiB mỗi cluster-up).
+
+**Image 2: app proxy (FastAPI + Ray Serve QA handler)** — build từ repo:
 ```dockerfile
-# Dockerfile.gpu
-FROM rayproject/ray:2.55.1-py311-gpu
-
-USER root
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git \
- && rm -rf /var/lib/apt/lists/*
-USER ray
+# Dockerfile.app  (x86_64, vì cùng cluster với GPU node)
+FROM python:3.11-slim
 
 WORKDIR /serve
-COPY requirements-gpu.txt .
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+# requirements: fastapi, uvicorn, ray[serve]==2.55.1, openai>=1.40,
+#               onnxruntime==1.20.0, tokenizers, qdrant-client, pypdf, etc.
 
-# vLLM wheel cho CUDA 12.1 — pinned
-RUN pip install --no-cache-dir \
-    'vllm==0.6.3' \
-    'autoawq==0.2.6' \
-    'torch==2.4.0+cu121' --index-url https://download.pytorch.org/whl/cu121
-
-RUN pip install --no-cache-dir -r requirements-gpu.txt
-
-# Pre-download model (AWQ ~5 GB) — bake vào image để cold start nhanh
-ARG MODEL_ID=Qwen/Qwen2.5-7B-Instruct-AWQ
-RUN python -c "from huggingface_hub import snapshot_download; \
-    snapshot_download(repo_id='${MODEL_ID}', local_dir='/models/llm', \
-                      allow_patterns=['*.safetensors','*.json','*.txt','tokenizer*'])"
+# Pre-download embedder ONNX (~120 MiB INT8) — fast, OK to bake
+RUN python -c "from optimum.exporters.onnx import main_export; \
+    main_export('intfloat/multilingual-e5-small', '/models/embedder-onnx', \
+                task='feature-extraction')"
+# Quantize step here (~80 MiB after INT8)
 
 COPY app ./app
 COPY scripts ./scripts
 
-ENV MODEL_PATH=/models/llm
+ENV EMBEDDER_MODEL_PATH=/models/embedder-onnx-int8
 ENV PYTHONPATH=/serve
+CMD ["python", "-m", "app.server"]
 ```
 
-Image size cuối: ~10–12 GiB (ray-gpu base 5GB + CUDA libs + vLLM + model 5GB). ECR pull lần đầu trên g5.xlarge: ~60s.
+Image size: ~1.5 GiB (no CUDA libs). ECR pull trên head: ~15s.
+
+> **Image build pipeline:** CI/CodeBuild trên `linux/amd64` (không cross-compile từ ARM dev box). GitHub Actions runner `ubuntu-latest` đủ.
 
 #### 3.5.7 NVIDIA device plugin
 
@@ -902,43 +913,69 @@ kubectl get node <gpu-node> -o jsonpath='{.status.allocatable.nvidia\.com/gpu}'
 # Expect: 1
 ```
 
+### 3.6 Frontend choice — HTMX vs React+Vite
+
+Hiện `app/server.py` chỉ có inline HTML chat đơn giản. RAG UI cần thêm: upload form, document list, ingest status polling, QA box, source citations expand/collapse, optional latency breakdown panel.
+
+| Aspect | **HTMX + Alpine.js** (recommended MVP) | **React + Vite + TypeScript** |
+|---|---|---|
+| Stack | FastAPI render Jinja2 HTML + HTMX swap | SPA build, FastAPI = API-only |
+| Setup | 0 build step; chỉ thêm template + `<script src=htmx>` | npm install, vite config, CORS setup |
+| Code | ~300 LOC HTML+Jinja | ~1,000 LOC TS + components |
+| Effort | 0.5 ngày | 1.5 ngày |
+| Tốc độ first paint | Rất nhanh (SSR) | Cần JS bundle parse |
+| Streaming response (Phase 2) | SSE qua HTMX `hx-ext=sse` — OK | EventSource native — OK |
+| Maintain dài hạn | Khi UI phức tạp > 5 màn → khó | Scale tốt với component model |
+| Demo "đẹp" cho stakeholder | Đủ; hơi ascetic | Polished hơn, dễ tweak CSS |
+
+**Khuyến nghị:**
+- **MVP demo:** HTMX. Lý do: lab project, demo course, 5–8 màn cơ bản, 0 build step → cluster-up + cài app + show xong trong 1 buổi.
+- **Nếu sau MVP định pitch như product**, migrate sang React+Vite ở Phase 11+.
+
+```
+# HTMX UI surfaces (MVP)
+GET  /             → render home (upload form + chat box + doc list partial)
+POST /documents    → return doc card partial (htmx swap into list)
+GET  /documents    → list partial (poll every 3s for processing → ready)
+POST /qa           → return answer card partial (sources expandable)
+```
+
 ---
 
 ## 4. Resource sizing — EC2 specific + lifecycle
 
-### 4.1 Node groups (ephemeral cluster)
+### 4.1 Node groups (ephemeral cluster — rev 2)
 
 | Node group | Instance | vCPU | RAM | GPU | $/h on-demand | $/h spot | Vai trò |
 |---|---|---:|---:|---|---:|---:|---|
-| `head` | t4g.large | 2 | 8 | — | $0.0672 | ~$0.020 | Ray GCS, Serve proxy, **Embedder pin** |
-| `gpu-worker` | **g5.xlarge** | 4 | 16 | **A10G 24GB** | $1.006 | **~$0.40** | **vLLM ChatModel (1 actor/node)** |
-| `vector-db` | r7g.large | 2 | 16 | — | $0.1071 | ~$0.032 | Qdrant |
+| `head` | **m6i.large** (x86) | 2 | 8 | — | $0.096 | ~$0.030 | Ray head, FastAPI proxy, **Embedder + Qdrant collocate** |
+| `gpu` | **g6.xlarge** (primary) | 4 | 16 | **L4 24GB** | $0.805 | **~$0.32** | vllm-openai server |
+| `gpu` | **g5.xlarge** (fallback) | 4 | 16 | **A10G 24GB** | $1.006 | ~$0.40 | vllm-openai server |
+| `gpu` | g4dn.xlarge (cheap fallback) | 4 | 16 | T4 16GB | $0.526 | ~$0.21 | KV cache hạn chế, no FP8 |
 
-**Backup GPU options (nếu A10G spot không có):**
+**Spot diversification trong 1 MNG:** đặt `instance_types = ["g6.xlarge", "g5.xlarge", "g4dn.xlarge"]` với `spot_allocation_strategy = "capacity-optimized-prioritized"`. EKS sẽ pick GPU rẻ + còn capacity, ưu tiên theo thứ tự.
 
-| Alternative | GPU | $/h spot | Note |
-|---|---|---:|---|
-| g4dn.xlarge | T4 16GB | ~$0.21 | Rẻ hơn, đủ cho 7B AWQ; KV cache hạn chế hơn |
-| g6.xlarge | L4 24GB | ~$0.32 | Newer, energy-efficient |
-| g5.2xlarge | A10G 24GB | ~$0.50 | Spot pool lớn hơn g5.xlarge khi region tight |
+**Tại sao chọn (rev 2):**
+- **m6i.large head x86:** Ray head + GPU worker phải cùng arch để share CUDA image. m6i Ice Lake giá tốt, đủ cho head + Embedder + Qdrant collocate ở MVP scale. Alternative: `t3a.large` (~$25/mo on-demand) nếu siết budget hơn.
+- **g6.xlarge primary:** L4 24GB Ada arch (2023), inference-oriented, hỗ trợ FP8 KV. **Rẻ hơn g5.xlarge $0.08/h × 80h = ~$6.4/mo**. AWS định vị G6 thay G5 cho inference workload mới.
+- **g5.xlarge fallback:** A10G 24GB, spot pool lớn hơn ở us-west-2, FP8 KV support. Pick khi g6 spot không có.
+- **g4dn.xlarge cheap fallback only:** T4 Turing — KHÔNG hỗ trợ FP8 KV cache, decode throughput thấp hơn ~3x. 16 GB VRAM đủ 7B AWQ nhưng margin thấp; KHÔNG fit 14B AWQ.
 
-**Tại sao chọn:**
-- **g5.xlarge:** A10G 24GB là sweet spot — đủ VRAM cho 7B–14B AWQ + KV `n_ctx=8192`. Capacity pool spot ổn định ở us-west-2.
-- **r7g.large:** Memory-bound Qdrant, Graviton3 sustained, $0.032/h spot rẻ.
-- **t4g.large head:** giữ nguyên — Ray GCS không tốn nhiều, kèm Embedder pin tận dụng 2 vCPU.
-
-### 4.2 Pod resource matrix
+### 4.2 Pod resource matrix (rev 2)
 
 | Pod | Node | CPU req/limit | RAM req/limit | GPU | Replicas |
 |---|---|---|---|---:|---:|
-| Ray head | t4g.large | 0.5 / 1.5 | 1.5 / 2.5 GiB | — | 1 |
-| Embedder (Ray Serve actor, pinned head) | t4g.large | 0.5 / 1 | 0.5 / 1.5 GiB | — | 1 |
-| ChatModel (Ray Serve actor) | g5.xlarge | 3 / 3.5 | 12 / 13 GiB | **1** | 1 |
-| Qdrant | r7g.large | 0.5 / 1.5 | 1 / 3 GiB | — | 1 |
+| Ray head | head (m6i.large) | 0.5 / 1.5 | 1.5 / 2.5 GiB | — | 1 |
+| FastAPI/QA handler (Ray Serve) | head | 0.3 / 0.8 | 0.5 / 1 GiB | — | 1 |
+| Embedder (Ray Serve actor) | head | 1.0 / 1.0 | 0.5 / 1.5 GiB | — | 1 |
+| Qdrant StatefulSet | head | 0.3 / 1.0 | 0.5 / 2 GiB | — | 1 |
+| **vllm-openai StatefulSet** | gpu (g6/g5) | 3 / 3.5 | 12 / 14 GiB | **1** | 1 |
 
-> Cluster floor khi up: 4.5 vCPU + 15 GiB RAM + 1 GPU yêu cầu → 3 nodes (t4g + g5 + r7g) = 8 vCPU + 56 GiB + 1 GPU capacity. **Headroom rộng**.
+> Head packing: 2.1 vCPU req / 3 GiB req trên 2 vCPU / 8 GiB node. CPU req hơi over, **giảm Embedder req xuống 0.7** hoặc upgrade head lên `m6i.xlarge` nếu thấy throttling.
+>
+> Cluster floor: 2 nodes (head + gpu) = 6 vCPU + 24 GiB + 1 GPU. Headroom đủ cho demo.
 
-GPU node pod yêu cầu:
+GPU pod yêu cầu:
 ```yaml
 resources:
   limits:
@@ -1069,28 +1106,30 @@ resource "kubectl_manifest" "qdrant_pv" {
 }
 ```
 
-### 4.4 Cost analysis (us-west-2, destroy/recreate model)
+### 4.4 Cost analysis (us-west-2, destroy/recreate, rev 2)
 
 **Active 80h/tháng** (~2.5h × 24 buổi/tháng):
 
 | Item | Rate | Hours | $/tháng |
 |---|---:|---:|---:|
-| EKS control plane | $0.10/h | 80 | $8 |
-| g5.xlarge spot (A10G) | $0.40/h | 80 | **$32** |
-| t4g.large head spot | $0.020/h | 80 | $2 |
-| r7g.large vector-db spot | $0.032/h | 80 | $3 |
-| EBS root nodes prorated | — | 80 | $2 |
-| EBS Qdrant PVC 10 GiB (Retain) | $0.08/GB-mo | 720 | $0.80 |
-| EBS LLM cache 20 GiB (optional) | $0.08/GB-mo | 720 | $1.60 |
+| EKS control plane | $0.10/h | 80 | $8.00 |
+| g6.xlarge spot (L4, primary) | $0.32/h | 80 | **$25.60** |
+| m6i.large head spot | $0.030/h | 80 | $2.40 |
+| EBS root nodes (2 node × 20 GiB, prorated 80h) | — | 80 | $1.50 |
+| EBS Qdrant PVC 10 GiB (Retain, always) | $0.08/GB-mo | 720 | $0.80 |
+| EBS LLM cache 20 GiB (Retain, always) | $0.08/GB-mo | 720 | $1.60 |
 | S3 (docs + snapshots, ~10 GiB) | $0.023/GB-mo | always | $0.25 |
-| ECR (image GPU ~12 GiB) | $0.10/GB-mo | always | $1.20 |
-| Data transfer (CloudWatch + ECR pull) | — | — | $3 |
-| **Total** | | | **~$54/tháng** |
+| ECR (app image ~1.5 GiB; vllm pulled from upstream) | $0.10/GB-mo | always | $0.15 |
+| Data transfer (CloudWatch + image pull) | — | — | $3.00 |
+| **Total (g6.xlarge)** | | | **~$43/tháng** |
+| **Total (g5.xlarge fallback)** | (+$6.4) | | **~$49/tháng** |
 
-→ Còn dư **~$36 buffer** trong budget $90/tháng. Có thể:
-- Tăng active lên **150h/tháng** → $90/tháng đúng budget.
-- Hoặc upgrade lên **Qwen2.5-14B-AWQ** (cùng g5.xlarge VRAM 24GB đủ) không tăng cost.
-- Hoặc thêm **on-demand fallback** 1× g5.xlarge khi spot bị evict.
+> So với rev 1 (~$54): tiết kiệm **$5–10/tháng** bằng cách (a) bỏ vector-db node ($3), (b) chọn g6 thay g5 ($6.4), (c) ECR nhỏ hơn vì không bake model + không dùng custom GPU image ($1).
+
+→ Còn dư **$40–47 buffer** trong budget $90/tháng. Có thể:
+- Tăng active lên **150h/tháng** → ~$77/tháng vẫn dưới budget.
+- Hoặc thêm **on-demand fallback** GPU node trong demo quan trọng (overhead ~$4/buổi).
+- Hoặc **giữ buffer** cho việc reindex / load test / scale-up scratch.
 
 ### 4.5 Lifecycle commands
 
@@ -1145,13 +1184,17 @@ jobs:
 
 ```hcl
 gpu_worker = {
-  instance_types       = ["g5.xlarge", "g5.2xlarge", "g6.xlarge"]   # diversify
+  instance_types       = ["g6.xlarge", "g5.xlarge", "g4dn.xlarge"]   # diversify, ưu tiên g6
   capacity_type        = "SPOT"
   spot_allocation_strategy = "capacity-optimized-prioritized"
   on_demand_percentage = 0
   min_size             = 0
   desired_size         = 1
   max_size             = 2
+  labels = { "node-type" = "gpu-worker" }
+  taints = [{
+    key = "nvidia.com/gpu", value = "true", effect = "NO_SCHEDULE"
+  }]
 }
 ```
 
@@ -1200,29 +1243,30 @@ Scale-up bằng cách thêm GPU node (autoscaler):
 - `gpu-worker.max_size = 2` → 2 GPU = 2 Ray actor = 16–32 concurrent.
 - Cost +$32/tháng nếu chạy 80h.
 
-### 5.3 Cold start
+### 5.3 Cold start (rev 2)
 
 | Component | Cold time | Mitigation |
 |---|---:|---|
-| EC2 spot allocation (g5.xlarge) | 60–120 s | Capacity-optimized spot strategy; fallback on-demand |
-| EKS node ready | 90 s (cAdvisor + kubelet join) | Cluster autoscaler scale-up sớm 5 phút trước demo |
-| NVIDIA driver init | 15 s | DaemonSet đã warm sẵn |
-| Image pull g5.xlarge (12 GiB từ ECR) | 60 s | Pre-pulled qua imagePuller DaemonSet |
-| vLLM model load (5 GB AWQ vào VRAM) | 15 s | Model baked vào image, đọc từ local disk |
+| EC2 spot allocation (g6/g5.xlarge) | 60–120 s | Capacity-optimized spot diversified (g6 > g5 > g4dn); fallback on-demand cho demo |
+| EKS node ready | 90 s (cAdvisor + kubelet join) | — |
+| NVIDIA driver init | 15 s | DaemonSet warm sẵn từ image plugin |
+| Image pull `vllm/vllm-openai` (7 GiB upstream) | 90 s | First time / cluster-up; EBS llm-cache giúp model load tránh re-download |
+| Image pull app (1.5 GiB ECR) | 15 s | — |
+| vLLM model load (5 GB AWQ từ EBS llm-cache → VRAM) | 12 s | Persistent EBS cache → không re-download HF |
 | CUDA graph capture | 8 s | One-time per replica |
-| Ray Serve replica ready | 5 s | — |
-| **Total cold start** (1st replica) | **~4 phút** | Ưu tiên: scale-up trước demo 5–10 phút |
+| Ray Serve + FastAPI ready | 5 s | — |
+| **Total cold start** (1st `cluster-up`) | **~4–5 phút** | Subsequent cluster-up nhanh hơn vì EBS cache + image cache trên ECR cache layer |
 
 `cluster-up` end-to-end timeline:
 ```
 T+0:00  terraform apply (EKS + nodegroups)
 T+5:00  EKS cluster ACTIVE
-T+8:00  Nodes Ready, NVIDIA plugin scheduled
-T+10:00 KubeRay + Qdrant pods scheduled
-T+11:30 Qdrant Ready (PV bind to retained EBS — data có ngay)
-T+12:00 Image pull complete (GPU node)
-T+13:30 vLLM model loaded, Ray Serve replica Ready
-T+14:00 /qa endpoint responsive ✓
+T+8:00  Nodes Ready (head + gpu), NVIDIA plugin scheduled, EBS CSI driver up
+T+10:00 PV qdrant-data-pv + llm-cache-pv bind to retained EBS volumes
+T+11:30 Qdrant StatefulSet Ready (head), data có ngay từ session trước
+T+12:30 App pod (FastAPI + Embedder) Ready trên head
+T+13:30 vllm-openai pod pull + model load (5GB từ EBS) + CUDA graph
+T+14:30 /qa endpoint responsive ✓ (test với 1 câu)
 ```
 
 ---
@@ -1317,22 +1361,24 @@ Runbook entries thêm vào `docs/runbook.md`:
 
 ## 9. Implementation plan
 
-### 9.1 Phase breakdown
+### 9.1 Phase breakdown (rev 2 — GPU skeleton trước RAG)
+
+> **Nguyên tắc reorder:** không nhảy thẳng vào RAG khi infra GPU chưa pass `vllm /chat` benchmark. Risk lớn nhất là image arch mismatch + spot capacity. Validate trước, build RAG sau.
 
 | Phase | Mục tiêu | Output | Effort |
 |---|---|---|---:|
-| **P0** Persistent stack | Tạo VPC + S3 + ECR + EBS volumes + IAM/OIDC (1 lần duy nhất) | `infra/environments/dev/persistent/` ready | 0.5 ngày |
-| **P1** Ephemeral skeleton | Split TF state, ephemeral apply ra EKS + 3 node groups (head/gpu/vector-db), NVIDIA plugin | `cluster-up`/`cluster-down` lifecycle hoạt động | 1 ngày |
-| **P2** vLLM GPU backend | Docker image GPU (CUDA 12.1 + vLLM 0.6.3 + AWQ 7B baked); Ray Serve deployment `ChatModel` | `Dockerfile.gpu`, `app/backends/vllm_backend.py`; `/chat` endpoint chạy GPU | 1 ngày |
-| **P3** Qdrant + PV bind | StatefulSet trên r7g.large; PV bind vào EBS retained; collection schema | smoke test: upsert + search ok; data sống qua destroy/recreate | 0.5 ngày |
-| **P4** Embedder | Export e5-small → ONNX INT8 trong image; Ray Serve `Embedder` pinned head | `/embed` endpoint < 100 ms batch=1 | 1 ngày |
-| **P5** Ingest pipeline | `/documents` POST/GET/DELETE; Ray Task async; S3 raw storage; idempotent SHA-256 | upload PDF 50-page → ready < 60s | 1 ngày |
-| **P6** RAG QA flow | `/qa` endpoint: embed → search → augment → vLLM; prompt template VN | 5 câu test pass, p95 < 12s | 1 ngày |
-| **P7** UI extension | Upload form + doc selector + chat box (mở rộng HTML hiện có) | demo end-to-end browser | 0.5 ngày |
-| **P8** Observability | RAG dashboard Grafana (6 panel) + GPU metrics (DCGM exporter) | dashboard có data thực | 0.5 ngày |
-| **P9** Eval + seed data | Wikipedia VN + Aposa docs seed; 50-câu eval set; recall@5 measurement | `tests/rag_eval/vn_50.jsonl`, eval report | 1 ngày |
-| **P10** Docs + ADR | `rag-quickstart.md`, runbook R-RAG-001/002/003, ADR-006 (GPU pivot), ADR-007 (persistent/ephemeral) | docs đầy đủ | 0.5 ngày |
-| **Total** | | | **~8.5 ngày** |
+| **P0** Persistent stack | VPC (x86 subnet, no NAT) + S3 + ECR + EBS volumes (qdrant 10Gi, llm-cache 20Gi) + IAM/OIDC | `infra/environments/dev/persistent/` apply ok | 0.5 ngày |
+| **P1** Ephemeral x86 GPU skeleton | EKS + 2 node groups (head m6i.large, gpu g6/g5 spot diversified), EBS CSI driver, NVIDIA device plugin, DCGM exporter, Makefile cluster-up/down | `kubectl get node -l node-type=gpu-worker -o jsonpath='{.items[*].status.allocatable.nvidia\.com/gpu}'` = 1; `cluster-up` < 15 phút | 1 ngày |
+| **P2** vLLM `/chat` benchmark | Deploy `vllm/vllm-openai:latest-stable` StatefulSet với Qwen2.5-7B-AWQ; smoke `curl /v1/chat/completions`; bench prefill/decode | `reports/p2-vllm-bench.md` (prefill ≥ 1500 tok/s, decode ≥ 60 tok/s, total /chat < 8s); FastAPI proxy `/chat` qua OpenAI client | 1 ngày |
+| **P3** Qdrant collocate + PV bind | StatefulSet trên head x86 với taint toleration; PV bind vào EBS retained `vol-XXXX`; collection schema | upsert + search ok; destroy/recreate cluster → `points_count` còn nguyên | 0.5 ngày |
+| **P4** Embedder | Export e5-small → ONNX INT8 (build trong app image); Ray Serve `Embedder` pinned head | `/embed` batch=1 < 100 ms, batch=32 < 500 ms | 1 ngày |
+| **P5** Ingest pipeline | `/documents` POST/GET/DELETE; Ray Task async; S3 raw; SHA-256 dedup; cron cleanup stuck-processing | upload PDF 50-page → ready < 60s | 1 ngày |
+| **P6** RAG `/qa` flow | embed → qdrant search → prompt build → vllm-openai HTTP; VN prompt template; sources[] | 5 câu test pass, p95 < 12s; faithfulness manual check 5/5 | 1 ngày |
+| **P7** Frontend extension | Upload form + doc list + ingest status polling + QA box + source citations (xem §3.6) | demo end-to-end browser | 0.5–1.5 ngày (HTMX vs React) |
+| **P8** Observability | RAG dashboard Grafana (6 panel) + GPU metrics (DCGM exporter) + vLLM `/metrics` scrape | dashboard có data thực | 0.5 ngày |
+| **P9** Eval + seed data | Wikipedia VN + Aposa docs seed; 50-câu eval set; recall@5 measurement; reranker A/B nếu recall < 0.75 | `tests/rag_eval/vn_50.jsonl`, eval report; quyết định có thêm reranker | 1 ngày |
+| **P10** Docs + ADR | `rag-quickstart.md`, runbook R-RAG-001/002/003, ADR-006/007/008 | docs đầy đủ | 0.5 ngày |
+| **Total** | | | **~8.5–9.5 ngày** |
 
 ### 9.2 MVP scope (1 buổi demo — 6h)
 
@@ -1379,52 +1425,69 @@ Runbook entries thêm vào `docs/runbook.md`:
 | R5 | Cluster-up 14 phút hơi lâu cho demo trực tiếp | Document trong runbook: "khởi tạo cluster ≥ 15 min trước demo". |
 | R6 | LLM bịa số liệu (hallucination) | Soft constraint qua prompt; Phase 2 grounding check (regex numbers → verify trong context). |
 | R7 | Snapshot Qdrant fail giữa chừng | Snapshot dùng `Retain` reclaim — data trong PVC vẫn còn; S3 snapshot chỉ là backup thứ 2. |
-| R8 | NVIDIA driver mismatch với CUDA wheel | Pin `nvidia-device-plugin` v0.14.5 + base image `rayproject/ray:2.55.1-py311-gpu` (CUDA 12.1). |
+| R8 | NVIDIA driver mismatch với CUDA wheel | Dùng official `vllm/vllm-openai:latest-stable` (đã test combo torch/CUDA/vLLM/autoawq). Pin tag immutable cho production. |
+| R9 | ARM head + x86 GPU image mismatch (đã fix rev 2) | Head x86 m6i.large; tất cả Ray pod share image `linux/amd64`. Không build ARM image cho path RAG. |
+| R10 | Ingest mất khi cluster destroy giữa chừng | Idempotent SHA-256 → user re-upload là OK; cron cleanup `status=processing > 5min` → mark failed + xoá partial Qdrant chunks. |
+| R11 | Qdrant collocate head bị OOM khi scale lên (rev 2) | Alert `container_memory_usage > 6 GiB` trên head → tách Qdrant ra `r7g.large` node group; document trong runbook R-RAG-004. |
 
 ---
 
 ## 11. References
 
-- **Model:** `Qwen/Qwen2.5-7B-Instruct-AWQ` (HF), `Qwen/Qwen2.5-14B-Instruct-AWQ` (upgrade candidate).
-- **vLLM:** v0.6.3+, `awq_marlin` quantization kernel, FP8 KV cache (`kv_cache_dtype="fp8_e5m2"`).
-- **NVIDIA A10G (g5):** 24 GB GDDR6 VRAM, 250 TFLOPS FP16, Ampere arch.
-- **NVIDIA T4 (g4dn):** 16 GB GDDR6, 65 TFLOPS FP16, Turing arch (fallback option).
-- **NVIDIA L4 (g6):** 24 GB GDDR6, 121 TFLOPS FP16, Ada arch (alternative).
+- **Model:** `Qwen/Qwen2.5-7B-Instruct-AWQ` (HF). Upgrade candidate sau eval: `Qwen/Qwen2.5-14B-Instruct-AWQ`.
+- **vLLM:** official image `vllm/vllm-openai:latest-stable` (KHÔNG pin 0.6.3 nữa — image upstream là source of truth). Features dùng: `awq_marlin` kernel, FP8 KV cache (`kv_cache_dtype=fp8_e5m2`).
+- **NVIDIA L4 (g6):** 24 GB GDDR6, 121 TFLOPS FP16, Ada arch (2023) — **primary**.
+- **NVIDIA A10G (g5):** 24 GB GDDR6, 250 TFLOPS FP16, Ampere arch — fallback.
+- **NVIDIA T4 (g4dn):** 16 GB GDDR6, 65 TFLOPS FP16, Turing arch — cheap fallback (no FP8 KV).
 - **Qdrant docs:** quantization, on-disk + memmap, snapshots.
-- **Embedding:** `intfloat/multilingual-e5-small` — Wang et al., 2024.
-- **EC2 spot pricing snapshot us-west-2 (2026-05):** t4g.large $0.020/h, r7g.large $0.032/h, g5.xlarge $0.40/h, g4dn.xlarge $0.21/h, g6.xlarge $0.32/h.
-- **AWS Graviton3 (r7g):** Neoverse V1, SVE 256-bit — đủ cho Qdrant memory workload.
+- **Embedding:** `intfloat/multilingual-e5-small` (Wang et al., 2024). Phase 2 candidates: `BAAI/bge-m3`, `BAAI/bge-reranker-v2-m3`.
+- **EC2 spot pricing snapshot us-west-2 (2026-05):** m6i.large $0.030/h, g6.xlarge $0.32/h, g5.xlarge $0.40/h, g4dn.xlarge $0.21/h.
 - **Persistent/ephemeral pattern:** `lifecycle.prevent_destroy` + remote_state cross-stack reads.
-- ADRs cũ: [`002-graviton-arm-nodes.md`](adr/002-graviton-arm-nodes.md), [`001-ray-serve-on-kuberay.md`](adr/001-ray-serve-on-kuberay.md).
-- ADRs mới (sẽ tạo): `006-gpu-pivot-for-rag.md`, `007-persistent-ephemeral-split.md`, `008-vllm-over-llamacpp.md`.
+- **Frontend:** HTMX 1.9+ (htmx.org), Alpine.js 3.x. React+Vite reserved cho Phase 11+.
+- ADRs cũ: [`002-graviton-arm-nodes.md`](adr/002-graviton-arm-nodes.md) (sẽ deprecate cho path RAG — Graviton chỉ còn ý nghĩa cho path CPU-only `llm-chat`), [`001-ray-serve-on-kuberay.md`](adr/001-ray-serve-on-kuberay.md).
+- ADRs mới (sẽ tạo):
+  - `006-gpu-pivot-for-rag.md` — vì sao đổi ARM CPU sang x86 GPU cho RAG.
+  - `007-persistent-ephemeral-split.md` — Terraform state split + EBS Retain.
+  - `008-vllm-openai-server-pattern.md` — vì sao tách vllm-openai server thay vì Ray actor wrap.
+  - `009-awq-quantization.md` — AWQ Marlin + FP8 KV trade-off.
+  - `010-qdrant-collocate-head.md` — vì sao bỏ dedicated vector-db node ở MVP.
 
 ---
 
 ## 12. Appendix A — env var reference
 
-### 12.1 ChatModel (vLLM GPU)
+### 12.1 vllm-openai server args (rev 2 — truyền qua container `args`)
+
+| Arg | Default | Range | Note |
+|---|---|---|---|
+| `--model` | `Qwen/Qwen2.5-7B-Instruct-AWQ` | HF repo | server load lần đầu vào EBS llm-cache, lần sau đọc từ cache |
+| `--quantization` | `awq_marlin` | awq/awq_marlin/gptq | marlin nhanh hơn awq cũ ~2x |
+| `--max-model-len` | 8192 | 2048–32768 | trade-off VRAM |
+| `--gpu-memory-utilization` | 0.85 | 0.5–0.95 | càng cao càng nhiều KV slot |
+| `--kv-cache-dtype` | `fp8_e5m2` | auto/fp8_e5m2/fp8_e4m3 | g6 (L4) / g5 (A10G) hỗ trợ; g4dn (T4) **KHÔNG** |
+| `--max-num-seqs` | 16 | 1–256 | concurrent decode cap |
+| `--enforce-eager` | false | bool | true để debug, false dùng CUDA graph |
+| `--swap-space` | 4 | 0–32 | GiB CPU↔GPU swap khi KV pool full |
+| `--served-model-name` | `qwen-rag` | str | model id mà OpenAI client gọi |
+| `--dtype` | `float16` | float16/bfloat16 | bfloat16 chỉ trên Ampere+ (ok cho A10G/L4) |
+
+### 12.1b QA handler env (client proxy đến vllm-openai)
+
+| Env var | Default | Note |
+|---|---|---|
+| `VLLM_BASE_URL` | `http://vllm-server-0.vllm-server.llm-chat:8000/v1` | cluster DNS nội bộ |
+| `VLLM_SERVED_MODEL` | `qwen-rag` | match `--served-model-name` |
+| `MAX_NEW_TOKENS` | 400 | server cap khi gọi `/v1/chat/completions` |
+| `MAX_INPUT_TOKENS` | 4000 | reject prompt vượt trước khi gửi cho vLLM |
+| `VLLM_TIMEOUT_S` | 60 | httpx timeout |
+
+### 12.2 Embedder (CPU ONNX trên head x86)
 
 | Env var | Default | Range | Note |
 |---|---|---|---|
-| `VLLM_MODEL` | `Qwen/Qwen2.5-7B-Instruct-AWQ` | HF repo | baked vào image qua `MODEL_PATH=/models/llm` |
-| `VLLM_MODEL_PATH` | `/models/llm` | path | local path nếu pre-downloaded |
-| `VLLM_QUANTIZATION` | `awq_marlin` | awq/awq_marlin/gptq | marlin nhanh hơn awq ~2x |
-| `VLLM_MAX_MODEL_LEN` | 8192 | 2048–32768 | trade-off VRAM |
-| `VLLM_GPU_MEMORY_UTILIZATION` | 0.85 | 0.5–0.95 | càng cao càng nhiều KV slot |
-| `VLLM_KV_CACHE_DTYPE` | `fp8_e5m2` | auto/fp8_e5m2/fp8_e4m3 | A10G/L4 hỗ trợ FP8 |
-| `VLLM_MAX_NUM_SEQS` | 16 | 1–256 | concurrent decode cap |
-| `VLLM_ENFORCE_EAGER` | false | bool | true để debug, false để dùng CUDA graph |
-| `VLLM_SWAP_SPACE_GIB` | 4 | 0–32 | CPU↔GPU swap khi KV pool full |
-| `MAX_NEW_TOKENS` | 400 | 1–2048 | server cap |
-| `MAX_INPUT_TOKENS` | 4000 | 500–8000 | reject prompt vượt |
-
-### 12.2 Embedder (CPU ONNX)
-
-| Env var | Default | Range | Note |
-|---|---|---|---|
-| `EMBEDDER_MODEL_PATH` | `/models/embedder-onnx-int8` | path | baked vào image |
+| `EMBEDDER_MODEL_PATH` | `/models/embedder-onnx-int8` | path | baked vào app image (~80 MiB) |
 | `EMBEDDER_BATCH_SIZE` | 32 | 1–64 | ingest batch; query luôn 1 |
-| `EMBEDDER_NUM_THREADS` | 1 | 1–2 | t4g.large 2 vCPU; share với Ray head |
+| `EMBEDDER_NUM_THREADS` | 1 | 1–2 | m6i.large 2 vCPU; share với Ray head + Qdrant |
 | `EMBEDDER_PREFIX_QUERY` | `query: ` | str | bắt buộc cho e5 — sai recall -15% |
 | `EMBEDDER_PREFIX_PASSAGE` | `passage: ` | str | bắt buộc cho e5 |
 
@@ -1493,7 +1556,14 @@ curl -X POST http://$APP/embed \
   -H 'content-type: application/json' \
   -d '{"texts": ["query: hello"]}' | jq '.dim, (.vectors[0]|length)'
 
-# 5. ChatModel (GPU vLLM) — direct chat test trước RAG
+# 5. vllm-openai server (GPU) — direct test qua port-forward trước khi qua proxy
+kubectl -n llm-chat port-forward svc/vllm-server 8000:8000 &
+curl -s http://localhost:8000/v1/models | jq .         # expect served-model-name=qwen-rag
+curl -s -X POST http://localhost:8000/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"qwen-rag","messages":[{"role":"user","content":"2+2?"}],"max_tokens":50}' | jq .
+
+# 5b. ChatModel via FastAPI proxy
 curl -X POST http://$APP/chat \
   -H 'content-type: application/json' \
   -d '{"messages":[{"role":"user","content":"Trả lời ngắn: 2+2 là?"}]}' | jq .

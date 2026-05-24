@@ -35,12 +35,12 @@ variable "image" {
 
 variable "head_cpu_request" {
   type    = string
-  default = "1200m"
+  default = "900m"
 }
 
 variable "head_cpu_limit" {
   type    = string
-  default = "1800m"
+  default = "1500m"
 }
 
 variable "head_memory_request" {

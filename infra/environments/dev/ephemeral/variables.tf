@@ -65,7 +65,7 @@ variable "head_instance_types" {
 }
 
 variable "head_capacity_type" {
-  description = "ON_DEMAND or SPOT. Head is small and on the critical path; SPOT cheaper but more eviction risk."
+  description = "ON_DEMAND or SPOT. Head is small; SPOT is cheap and usually available. Set ON_DEMAND for high-stakes demos."
   type        = string
   default     = "SPOT"
 }
@@ -88,7 +88,9 @@ variable "head_max_size" {
 ###############################################################################
 # GPU node group — runs vllm-openai. AL2023 NVIDIA AMI for driver preinstall.
 #
-# Rev5 cost-first default: g4dn.xlarge (T4 16GB, Turing, ~$0.21/h SPOT).
+# Rev5 default: g4dn.xlarge (T4 16GB, Turing) on ON_DEMAND so the lab works
+# on fresh AWS accounts where "All G and VT Spot Instance Requests" is often 0.
+# Flip gpu_capacity_type to SPOT after that quota is approved.
 #
 # IMPORTANT — T4 limitations vs g5/g6:
 #   - NO FP8 KV cache (Turing pre-Ampere). vllm-openai args MUST use
@@ -109,9 +111,9 @@ variable "gpu_instance_types" {
 }
 
 variable "gpu_capacity_type" {
-  description = "SPOT for lab. Flip to ON_DEMAND before high-stakes demo via -var gpu_capacity_type=ON_DEMAND."
+  description = "ON_DEMAND by default so cluster-up works without G/VT Spot quota. Use SPOT after 'All G and VT Spot Instance Requests' quota is approved."
   type        = string
-  default     = "SPOT"
+  default     = "ON_DEMAND"
 }
 
 variable "gpu_min_size" {

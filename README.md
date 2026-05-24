@@ -101,7 +101,7 @@ curl -s http://127.0.0.1:8000/embed \
 Default is lab/cost-first:
 
 - `persistent`: always-on storage only, roughly a few USD/month.
-- `ephemeral`: EKS + `m6i.large` head + `g4dn.xlarge` spot GPU while running.
+- `ephemeral`: EKS + `m6i.large` head + `g4dn.xlarge` GPU while running. GPU defaults to on-demand so lab bootstrap works without G/VT Spot quota; flip GPU to Spot after quota approval.
 - NAT is disabled by default in persistent network config to avoid fixed NAT cost; app access is via port-forward, not public LoadBalancer.
 
 For stable demos, use on-demand GPU or the stable profile described in `docs/rag-technical-design.md`.

@@ -77,7 +77,7 @@ locals {
         headGroupSpec = {
           rayStartParams = {
             "dashboard-host" = "0.0.0.0"
-            "num-cpus"       = "1.5"
+            "num-cpus"       = "1"
           }
           template = {
             spec = {

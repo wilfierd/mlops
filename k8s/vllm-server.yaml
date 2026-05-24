@@ -88,6 +88,12 @@ spec:
           env:
             - name: HF_HOME
               value: /models/hf-cache
+            # T4 (SM 7.5) + vllm/v1 flashinfer sampler can crash during
+            # startup profiling with:
+            #   AttributeError: 'int' object has no attribute 'isdigit'
+            # Keep vLLM engine V1, but force the standard sampler path.
+            - name: VLLM_USE_FLASHINFER_SAMPLER
+              value: "0"
             # Use modelscope mirror in case HF rate-limits during first download;
             # comment out if you prefer strict HF only.
             # - name: VLLM_USE_MODELSCOPE

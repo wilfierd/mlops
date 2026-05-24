@@ -36,11 +36,9 @@ module "eks" {
         "node-type"        = "head"
         "ray.io/node-type" = "head"
       }
-      taints = [{
-        key    = "ray-role"
-        value  = "head"
-        effect = "NO_SCHEDULE"
-      }]
+      # Do not taint the only non-GPU node. EKS-managed add-ons such as CoreDNS
+      # and aws-ebs-csi-driver need an untainted node during cluster bootstrap.
+      taints = []
       # ami_type auto-detected by module — m6i.xlarge → AL2023_x86_64_STANDARD.
     }
 
@@ -55,6 +53,20 @@ module "eks" {
       labels = {
         "node-type"      = "gpu-worker"
         "nvidia.com/gpu" = "true"
+      }
+      # vllm/vllm-openai includes CUDA/NVIDIA tooling and needs far more
+      # imagefs space than the EKS default 20Gi root disk while pulling and
+      # extracting layers. Model weights are still cached on llm-cache PVC.
+      block_device_mappings = {
+        xvda = {
+          device_name = "/dev/xvda"
+          ebs = {
+            volume_size           = 100
+            volume_type           = "gp3"
+            encrypted             = true
+            delete_on_termination = true
+          }
+        }
       }
       taints = [{
         key    = "nvidia.com/gpu"

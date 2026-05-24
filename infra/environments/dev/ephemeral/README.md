@@ -20,8 +20,8 @@ make cluster-down        # 5 min: snapshot Qdrant → S3, then destroy
 | Resource | Notes |
 |---|---|
 | EKS control plane **v1.34** | $0.10/h. Standard support — avoid extended-support fee on 1.30. |
-| Head MNG **(m6i.large SPOT)** | 1 node x86, hosts Ray head + FastAPI + Embedder + Qdrant. 2 vCPU / 8 GiB; ~$0.030/h. Tight packing — see doc rev5 §4.2. |
-| GPU MNG **(g4dn.xlarge SPOT)** | 0–2 nodes, T4 16GB, AL2023_x86_64_NVIDIA AMI. ~$0.21/h. **No FP8 KV** — vllm args use `--kv-cache-dtype=auto`. |
+| Head MNG **(m6i.large SPOT)** | 1 untainted x86 node, hosts EKS add-ons + Ray head + FastAPI + Embedder + Qdrant. 2 vCPU / 8 GiB; ~$0.030/h. Tight packing — see doc rev5 §4.2. |
+| GPU MNG **(g4dn.xlarge ON_DEMAND)** | 0–2 nodes, T4 16GB, AL2023_x86_64_NVIDIA AMI. ~$0.526/h while up. Default is on-demand because new accounts often have `All G and VT Spot Instance Requests = 0`. **No FP8 KV** — vllm args use `--kv-cache-dtype=auto`. |
 | addons: vpc-cni, coredns, kube-proxy, **aws-ebs-csi-driver** (with IRSA) | |
 | Helm: `nvidia-device-plugin` v0.14.5 | tolerates `nvidia.com/gpu` taint |
 | K8s namespace `llm-chat` | |
@@ -89,28 +89,29 @@ kubectl get pv qdrant-data-pv llm-cache-pv
 
 | Symptom | Likely cause |
 |---|---|
+| CoreDNS / EBS CSI stuck `DEGRADED` with `untolerated taint(s)` | The only non-GPU node was tainted. Head node must stay untainted unless you add a separate system/ops node. |
 | GPU pod stuck `Pending` with "0/2 nodes available, 1 Insufficient nvidia.com/gpu" | Device plugin not running. Re-check AMI type = `AL2023_x86_64_NVIDIA`. |
 | Head pod Pending after `kubectl apply` (Qdrant/vllm-server-0 OK but app actor not scheduling) | `m6i.large` allocatable ~1.8 vCPU is tight. Override `head_instance_types = ["m6i.xlarge"]` in tfvars. |
 | PVC stuck `Pending` after pod schedules | EBS CSI IRSA not wired. Check `aws_iam_role.ebs_csi` and the addon's `service_account_role_arn`. |
 | PV stays `Released` after a pod deletes | Old `claimRef` lingers. `kubectl patch pv qdrant-data-pv -p '{"spec":{"claimRef":null}}'` |
 | vllm-server-0 CrashLoopBackOff with `CUDA out of memory` | T4 + AWQ + KV cache too tight at `--gpu-memory-utilization=0.82`. Drop `--max-num-seqs` to 2, or `--max-model-len` to 3072. |
-| Spot eviction kills GPU node mid-demo | Set `gpu_capacity_type = "ON_DEMAND"` before high-stakes demos. ~$0.53/h × 4h ≈ $2.10 overhead. |
+| GPU node group fails with `MaxSpotInstanceCountExceeded` | Spot quota for `All G and VT Spot Instance Requests` is 0. Default uses `ON_DEMAND`; only set `gpu_capacity_type = "SPOT"` after quota is approved. |
 | `terraform destroy` complains about claimRef on PV | PVCs must be deleted before PVs. `cluster-down` script does this. |
 
 ## Cost while up
 
-Cost-first default (g4dn + m6i.large):
+Default dev profile (g4dn on-demand + m6i.large spot):
 
 | Component | Rate | 80h/month |
 |---|---:|---:|
 | EKS control plane | $0.10/h | $8.00 |
-| g4dn.xlarge SPOT (T4) | $0.21/h | $16.80 |
+| g4dn.xlarge ON_DEMAND (T4) | $0.526/h | $42.08 |
 | m6i.large SPOT | $0.030/h | $2.40 |
 | EBS root + misc | — | ~$2 |
 | Persistent storage (always-on) | — | ~$3–5 |
-| **Total cost-first** | | **~$35 / month** |
+| **Total default** | | **~$60 / month at 80h** |
 
-Stable profile (g6 + m6i.xlarge): adds ~$15–20/month for FP8 KV + larger model headroom.
+After G/VT Spot quota is approved, set `gpu_capacity_type = "SPOT"` to reduce the GPU line to roughly `$16.80 / 80h` and total to roughly `$35 / month`.
 
 ## Destroy
 

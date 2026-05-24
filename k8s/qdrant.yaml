@@ -1,6 +1,7 @@
 # Qdrant StatefulSet — collocate on head node (rev5 cost-first).
 #
-# Node:      m6i.large head (node-type=head, taint ray-role=head:NoSchedule)
+# Node:      m6i.large head (node-type=head). The head node is intentionally
+#            untainted so EKS system add-ons can bootstrap there.
 # Resources: 200m/512Mi request → 500m/1.5Gi limit (MVP scale ≤ 100K vectors)
 # Storage:   /qdrant/storage → qdrant-data-pvc → EBS vol-XXXX (persistent stack)
 #            PVC pre-created by ephemeral Terraform stack (k8s.tf).
@@ -53,15 +54,9 @@ spec:
       labels:
         app.kubernetes.io/name: qdrant
     spec:
-      # Collocate on head node. Head carries ray-role=head:NoSchedule taint
-      # (set by KubeRay) so we must explicitly tolerate it.
+      # Collocate on head node.
       nodeSelector:
         node-type: head
-      tolerations:
-        - key: ray-role
-          operator: Equal
-          value: head
-          effect: NoSchedule
       terminationGracePeriodSeconds: 30
       containers:
         - name: qdrant

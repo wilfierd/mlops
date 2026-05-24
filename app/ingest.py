@@ -8,6 +8,7 @@ State machine:  uploaded → processing → ready
 from __future__ import annotations
 
 import io
+import asyncio
 import json
 import logging
 import os
@@ -47,6 +48,7 @@ def _chunks_counter():
 # ── env ────────────────────────────────────────────────────────────────────────
 S3_PREFIX_DOCS = os.environ.get("S3_PREFIX_DOCS", "docs/")
 QDRANT_HOST = os.environ.get("QDRANT_HOST", "qdrant-0.qdrant.llm-chat.svc.cluster.local")
+QDRANT_HTTP_PORT = int(os.environ.get("QDRANT_HTTP_PORT", "6333"))
 QDRANT_GRPC_PORT = int(os.environ.get("QDRANT_GRPC_PORT", "6334"))
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "documents")
 CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE_TOKENS", "500"))
@@ -152,8 +154,10 @@ def chunk_text(text: str) -> list[str]:
 
 
 def _qdrant() -> QdrantClient:
-    # timeout=5 caps blocking gRPC calls; prevents threads from hanging on network failure
-    return QdrantClient(host=QDRANT_HOST, grpc_port=QDRANT_GRPC_PORT, prefer_grpc=True, timeout=5)
+    # Use REST for compatibility with qdrant/qdrant:v1.11.3. Newer qdrant-client
+    # versions can mis-serialize vectors over gRPC to this older server, causing
+    # "expected dim: 384, got 0" on upsert.
+    return QdrantClient(host=QDRANT_HOST, port=QDRANT_HTTP_PORT, prefer_grpc=False, timeout=5)
 
 
 RAY_SERVE_APP_NAME = os.environ.get("RAY_SERVE_APP_NAME", "llm-chat")
@@ -167,8 +171,7 @@ def point_id(doc_id: str, idx: int) -> str:
     return str(uuid.uuid5(_POINT_NS, f"{doc_id}:{idx}"))
 
 
-@ray.remote(num_cpus=0.2, max_retries=0)
-async def ingest_task(doc_id: str, ext: str, filename: str, bucket: str) -> None:
+async def _ingest_task_async(doc_id: str, ext: str, filename: str, bucket: str) -> None:
     """
     Parse → chunk → embed → upsert Qdrant. Writes meta on every state transition.
     max_retries=0: state machine owns retry; auto-retry would re-enter processing
@@ -258,6 +261,18 @@ async def ingest_task(doc_id: str, ext: str, filename: str, bucket: str) -> None
             "error_msg": str(exc)[:500],
             "failed_at": _now(),
         })
+
+
+@ray.remote(num_cpus=0.2, max_retries=0)
+def ingest_task(doc_id: str, ext: str, filename: str, bucket: str) -> None:
+    """
+    Sync Ray task wrapper.
+
+    Ray Core does not allow `async def` remote tasks. The implementation needs
+    async because Serve deployment handles are awaited, so run it inside a local
+    event loop.
+    """
+    asyncio.run(_ingest_task_async(doc_id, ext, filename, bucket))
 
 
 async def reap_stuck(bucket: str) -> int:

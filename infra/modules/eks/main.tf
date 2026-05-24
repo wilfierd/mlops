@@ -54,8 +54,9 @@ module "eks" {
         : "AL2023_x86_64_STANDARD"
       )
 
-      labels = v.labels
-      taints = v.taints
+      labels                = v.labels
+      taints                = v.taints
+      block_device_mappings = v.block_device_mappings
 
       tags = merge(var.tags, {
         "k8s.io/cluster-autoscaler/enabled"     = "true"

@@ -38,7 +38,7 @@ resource "helm_release" "kube_prom_stack" {
         podMonitorSelectorNilUsesHelmValues     = false
         podMonitorNamespaceSelector             = {}
         ruleSelectorNilUsesHelmValues           = false
-        nodeSelector = var.ops_node_selector
+        nodeSelector                            = var.ops_node_selector
       }
     }
     grafana = {

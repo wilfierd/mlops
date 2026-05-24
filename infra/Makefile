@@ -111,7 +111,7 @@ roll: ## force-delete pods so the latest image is pulled
 VLLM_MANIFEST := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))/../k8s/vllm-server.yaml
 
 vllm-up: ## deploy vllm-openai StatefulSet + Service (cost-first T4 profile)
-	kubectl apply -f $(VLLM_MANIFEST)
+	kubectl apply -f "$(VLLM_MANIFEST)"
 	@echo "==> Waiting for vllm-server pod Ready (first model download ~3–5 min)..."
 	kubectl -n $(NS) wait --for=condition=Ready pod/vllm-server-0 --timeout=900s
 	@echo "==> Ready. Port-forward then bench:"
@@ -119,7 +119,7 @@ vllm-up: ## deploy vllm-openai StatefulSet + Service (cost-first T4 profile)
 	@echo "    make vllm-bench"
 
 vllm-down: ## delete vllm-openai (keeps llm-cache PVC + EBS data)
-	kubectl delete -f $(VLLM_MANIFEST) --ignore-not-found
+	kubectl delete -f "$(VLLM_MANIFEST)" --ignore-not-found
 
 vllm-logs: ## tail vllm-server logs
 	kubectl -n $(NS) logs -f vllm-server-0
@@ -143,7 +143,7 @@ vllm-bench: ## run scripts/bench_vllm.py against localhost:8000 (port-forward fi
 QDRANT_MANIFEST := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))/../k8s/qdrant.yaml
 
 qdrant-up: ## deploy Qdrant StatefulSet + headless Service + init collection schema
-	kubectl apply -f $(QDRANT_MANIFEST)
+	kubectl apply -f "$(QDRANT_MANIFEST)"
 	@echo "==> Waiting for qdrant-0 Ready..."
 	kubectl -n $(NS) wait --for=condition=Ready pod/qdrant-0 --timeout=120s
 	@echo "==> Init 'documents' collection schema (idempotent)..."
@@ -153,7 +153,7 @@ qdrant-up: ## deploy Qdrant StatefulSet + headless Service + init collection sch
 	@echo "    curl -s http://localhost:6333/collections"
 
 qdrant-down: ## delete Qdrant StatefulSet + Service (keeps qdrant-data-pvc + EBS data)
-	kubectl delete -f $(QDRANT_MANIFEST) --ignore-not-found
+	kubectl delete -f "$(QDRANT_MANIFEST)" --ignore-not-found
 
 qdrant-logs: ## tail qdrant-0 logs
 	kubectl -n $(NS) logs -f qdrant-0
@@ -162,10 +162,17 @@ qdrant-pf: ## port-forward 6333:6333 + 6334:6334 to qdrant-0 (blocking)
 	kubectl -n $(NS) port-forward pod/qdrant-0 6333:6333 6334:6334
 
 qdrant-init: ## create/verify 'documents' collection schema (idempotent; opens temp port-forward)
-	@kubectl -n $(NS) port-forward pod/qdrant-0 6333:6333 & PF_PID=$$!; \
-	 sleep 2; \
+	@PF_LOG=$$(mktemp); \
+	 kubectl -n $(NS) port-forward pod/qdrant-0 6333:6333 >"$$PF_LOG" 2>&1 & PF_PID=$$!; \
+	 trap 'kill $$PF_PID 2>/dev/null || true; rm -f "$$PF_LOG"' EXIT; \
+	 READY=0; \
+	 for _ in $$(seq 1 30); do \
+	   if curl -sf http://localhost:6333/collections >/dev/null 2>&1; then READY=1; break; fi; \
+	   if ! kill -0 $$PF_PID 2>/dev/null; then cat "$$PF_LOG"; exit 1; fi; \
+	   sleep 1; \
+	 done; \
+	 if [ "$$READY" != "1" ]; then cat "$$PF_LOG"; exit 1; fi; \
 	 python3 ../scripts/qdrant_init.py; RC=$$?; \
-	 kill $$PF_PID 2>/dev/null || true; \
 	 exit $$RC
 
 qdrant-status: ## show Qdrant pod + PVC + collection stats (requires port-forward)

@@ -9,7 +9,7 @@
 #   DOCKERFILE   path to Dockerfile — defaults to Dockerfile.app
 #   DOCKER_CMD   docker | podman — autodetect
 #   IMAGE_PLATFORM  linux/amd64 (always; head + GPU are both x86 in rev3+)
-#   ROLL         "true" to kubectl delete pods after push (default: true)
+#   ROLL         "true" to delete app Ray pods after push (default: false)
 #   NAMESPACE    k8s namespace — defaults to llm-chat
 #
 # Reads from persistent stack outputs (ECR is owned by persistent).
@@ -24,7 +24,7 @@ PERSISTENT_DIR="${INFRA_DIR}/environments/${ENV}/persistent"
 DOCKER_CMD="${DOCKER_CMD:-docker}"
 IMAGE_PLATFORM="${IMAGE_PLATFORM:-linux/amd64}"
 NAMESPACE="${NAMESPACE:-llm-chat}"
-ROLL="${ROLL:-true}"
+ROLL="${ROLL:-false}"
 
 if [[ -z "${DOCKERFILE:-}" ]]; then
   DOCKERFILE="${ROOT_DIR}/Dockerfile.app"
@@ -65,6 +65,14 @@ main() {
       echo "need docker or podman" >&2
       exit 1
     fi
+  fi
+
+  # Fedora often provides a `docker` CLI wrapper backed by Podman. It accepts
+  # `docker buildx` but not Docker's `buildx build --push`, so treat it as
+  # Podman and use the portable build-then-push path below.
+  if [[ "${DOCKER_CMD}" == "docker" ]] && "${DOCKER_CMD}" version 2>&1 | grep -qi podman; then
+    DOCKER_CMD=podman
+    log "docker CLI is backed by podman; using podman build + podman push"
   fi
 
   if [[ ! -d "${PERSISTENT_DIR}" ]]; then
@@ -110,8 +118,10 @@ main() {
   fi
 
   if [[ "${ROLL}" == "true" ]]; then
-    log "rolling pods in ${NAMESPACE} so the new image is pulled"
-    kubectl -n "${NAMESPACE}" delete pod --all --grace-period=0 --force 2>/dev/null || true
+    log "rolling Ray app pods in ${NAMESPACE} so the new image is pulled"
+    kubectl -n "${NAMESPACE}" delete pod \
+      -l ray.io/cluster=llm-chat \
+      --grace-period=0 --force 2>/dev/null || true
     log "done. monitor: kubectl -n ${NAMESPACE} get pods -w"
   else
     log "done (skipped pod roll because ROLL=${ROLL})"

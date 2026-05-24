@@ -27,12 +27,13 @@ variable "node_subnet_ids" {
 variable "node_groups" {
   description = "Managed node groups keyed by name"
   type = map(object({
-    instance_types = list(string)
-    capacity_type  = optional(string, "ON_DEMAND")
-    min_size       = number
-    desired_size   = number
-    max_size       = number
-    labels         = optional(map(string), {})
+    instance_types        = list(string)
+    capacity_type         = optional(string, "ON_DEMAND")
+    min_size              = number
+    desired_size          = number
+    max_size              = number
+    labels                = optional(map(string), {})
+    block_device_mappings = optional(any, {})
     taints = optional(list(object({
       key    = string
       value  = string

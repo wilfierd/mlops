@@ -13,7 +13,7 @@ import numpy as np
 import tiktoken
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from openai import AsyncOpenAI
@@ -412,7 +412,7 @@ class RagApi:
     # ── Ingest: DELETE /documents/{doc_id} ──────────────────────────────────
 
     @api.delete("/documents/{doc_id}", status_code=204)
-    async def delete_document(self, doc_id: str) -> None:
+    async def delete_document(self, doc_id: str) -> Response:
         if not S3_BUCKET:
             raise HTTPException(status_code=503, detail="S3_BUCKET not configured")
         meta = meta_read(self.s3, S3_BUCKET, doc_id)
@@ -432,6 +432,7 @@ class RagApi:
             raise HTTPException(status_code=503, detail=f"qdrant delete failed: {type(exc).__name__}") from exc
         # Vectors removed — now soft-delete the meta record.
         meta_write(self.s3, S3_BUCKET, doc_id, {"status": "deleted"})
+        return Response(status_code=204)
 
     # ── QA: POST /qa ─────────────────────────────────────────────────────────
 

@@ -18,7 +18,7 @@
         "query": "label_values(ray_serve_num_router_requests_total{application!=\"\"}, application)",
         "refresh": 1,
         "sort": 1,
-        "current": {"text": "llm-chat-dev", "value": "llm-chat-dev"},
+        "current": {"text": "llm-chat", "value": "llm-chat"},
         "includeAll": false,
         "multi": false
       }

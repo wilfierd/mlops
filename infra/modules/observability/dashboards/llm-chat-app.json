@@ -33,7 +33,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/qa\"}[1m]))",
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/qa\"}[30m]))",
           "refId": "A"
         }
       ],
@@ -47,7 +47,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[5m])) by (le)) / 1000",
+          "expr": "histogram_quantile(0.50, sum(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}) by (le)) / 1000",
           "refId": "A"
         }
       ],
@@ -61,7 +61,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[5m])) by (le)) / 1000",
+          "expr": "histogram_quantile(0.95, sum(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}) by (le)) / 1000",
           "refId": "A"
         }
       ],
@@ -88,7 +88,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[5m])) by (le)) / 1000",
+          "expr": "histogram_quantile(0.99, sum(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}) by (le)) / 1000",
           "refId": "A"
         }
       ],
@@ -102,7 +102,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "100 * sum(rate(ray_serve_num_http_error_requests_total{application=~\"$app\", route=\"/qa\"}[5m])) / clamp_min(sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/qa\"}[5m])), 1)",
+          "expr": "100 * (sum(rate(ray_serve_num_http_error_requests_total{application=~\"$app\", route=\"/qa\"}[30m])) or vector(0)) / clamp_min((sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/qa\"}[30m])) or vector(0)), 1)",
           "refId": "A"
         }
       ],
@@ -129,7 +129,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(vllm:generation_tokens_total[1m]))",
+          "expr": "sum(rate(vllm:generation_tokens_total[30m]))",
           "refId": "A"
         }
       ],
@@ -144,7 +144,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\"}[1m])) by (route)",
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\"}[30m])) by (route)",
           "legendFormat": "{{route}}",
           "refId": "A"
         }
@@ -159,17 +159,17 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[2m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[2m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[2m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -184,7 +184,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(increase(ray_serve_deployment_request_counter_total{application=~\"$app\"}[5m])) by (replica)",
+          "expr": "sum(increase(ray_serve_deployment_request_counter_total{application=~\"$app\"}[30m])) by (replica)",
           "legendFormat": "{{replica}}",
           "refId": "A"
         }
@@ -199,7 +199,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\"}[1m])) by (status_code)",
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\"}[30m])) by (status_code)",
           "legendFormat": "{{status_code}}",
           "refId": "A"
         }
@@ -214,7 +214,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_deployment_processing_latency_ms_bucket{application=~\"$app\"}[2m])) by (le, deployment))",
+          "expr": "histogram_quantile(0.95, sum(ray_serve_deployment_processing_latency_ms_bucket{application=~\"$app\"}) by (le, deployment))",
           "legendFormat": "{{deployment}}",
           "refId": "A"
         }
@@ -224,19 +224,19 @@
     },
     {
       "id": 12,
-      "title": "Health probe success",
+      "title": "Ray Metrics Scrape Up",
       "type": "stat",
       "gridPos": {"x": 12, "y": 20, "w": 12, "h": 7},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=~\"/healthz|/api/healthz|/-/healthz\"}[1m]))",
-          "legendFormat": "health rps",
+          "expr": "max(up{namespace=\"llm-chat\", endpoint=\"metrics\"})",
+          "legendFormat": "scrape up",
           "refId": "A"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2}},
-      "description": "K8s readinessProbe traffic. Non-zero confirms probes are firing."
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}},
+      "description": "1 means Prometheus can scrape Ray head metrics. This is more reliable than health route traffic, which may not pass through Ray Serve."
     }
   ]
 }

@@ -33,17 +33,17 @@
       "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_qa_latency_ms_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(ray_rag_qa_latency_ms_bucket) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_latency_ms_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(ray_rag_qa_latency_ms_bucket) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(ray_rag_qa_latency_ms_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(ray_rag_qa_latency_ms_bucket) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -64,7 +64,7 @@
       "id": 2,
       "targets": [
         {
-          "expr": "sum(rate(ray_rag_qa_requests_total[5m])) by (status)",
+          "expr": "sum(rate(ray_rag_qa_requests_total[30m])) by (status)",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
@@ -85,7 +85,7 @@
       "id": 3,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_step_latency_ms_bucket[5m])) by (le, step))",
+          "expr": "histogram_quantile(0.95, sum(ray_rag_qa_step_latency_ms_bucket) by (le, step))",
           "legendFormat": "p95 {{step}}",
           "refId": "A"
         }
@@ -106,7 +106,7 @@
       "id": 4,
       "targets": [
         {
-          "expr": "sum(rate(ray_rag_qa_fallback_total[5m])) by (reason)",
+          "expr": "sum(rate(ray_rag_qa_fallback_total[30m])) by (reason)",
           "legendFormat": "{{reason}}",
           "refId": "A"
         }
@@ -158,7 +158,7 @@
       "id": 6,
       "targets": [
         {
-          "expr": "sum(rate(ray_rag_ingest_docs_total[5m])) by (result)",
+          "expr": "sum(rate(ray_rag_ingest_docs_total[30m])) by (result)",
           "legendFormat": "{{result}}",
           "refId": "A"
         }
@@ -179,7 +179,7 @@
       "id": 7,
       "targets": [
         {
-          "expr": "sum(rate(ray_rag_ingest_chunks_total[5m]))",
+          "expr": "sum(rate(ray_rag_ingest_chunks_total[30m]))",
           "legendFormat": "chunks/s",
           "refId": "A"
         }
@@ -233,12 +233,12 @@
       "id": 9,
       "targets": [
         {
-          "expr": "sum(rate(vllm:generation_tokens_total[5m]))",
+          "expr": "sum(rate(vllm:generation_tokens_total[30m]))",
           "legendFormat": "gen tokens/s",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(vllm:prompt_tokens_total[5m]))",
+          "expr": "sum(rate(vllm:prompt_tokens_total[30m]))",
           "legendFormat": "prompt tokens/s",
           "refId": "B"
         }
@@ -266,7 +266,7 @@
       "id": 10,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(rest_responses_duration_seconds_bucket{exported_endpoint=\"/collections/{name}/points/query\"}[5m])) by (le)) * 1000",
+          "expr": "histogram_quantile(0.95, sum(rest_responses_duration_seconds_bucket{exported_endpoint=\"/collections/{name}/points/query\"}) by (le)) * 1000",
           "legendFormat": "p95 search ms",
           "refId": "A"
         }
@@ -304,7 +304,7 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 48 },
       "id": 104,
-      "title": "QA Generation & Retrieval Quality",
+      "title": "vLLM Runtime",
       "type": "row"
     },
     {
@@ -320,17 +320,17 @@
       "id": 12,
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_qa_ttft_ms_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(vllm:time_to_first_token_seconds_bucket) by (le)) * 1000",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_ttft_ms_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(vllm:time_to_first_token_seconds_bucket) by (le)) * 1000",
           "legendFormat": "p95",
           "refId": "B"
         }
       ],
-      "title": "vLLM Time To First Token (ms)",
+      "title": "vLLM TTFT (ms)",
       "type": "timeseries"
     },
     {
@@ -346,17 +346,17 @@
       "id": 13,
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_qa_completion_tokens_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(vllm:request_generation_tokens_bucket) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_completion_tokens_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(vllm:request_generation_tokens_bucket) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         }
       ],
-      "title": "Completion Tokens per /qa",
+      "title": "vLLM Output Tokens per Request",
       "type": "timeseries"
     },
     {
@@ -365,26 +365,207 @@
         "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": { "lineWidth": 2 },
-          "unit": "short",
-          "min": 0,
-          "max": 1
+          "unit": "s"
         }
       },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 57 },
       "id": 14,
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_retrieval_top_score_bucket[5m])) by (le))",
-          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.95, sum(vllm:request_prefill_time_seconds_bucket) by (le))",
+          "legendFormat": "prefill p95",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_retrieval_top_score_bucket[5m])) by (le))",
-          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum(vllm:request_decode_time_seconds_bucket) by (le))",
+          "legendFormat": "decode p95",
           "refId": "B"
         }
       ],
-      "title": "Retrieval Top Hit Score (Qdrant cosine, post-threshold)",
+      "title": "vLLM Prefill vs Decode Time p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "percent"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 57 },
+      "id": 15,
+      "targets": [
+        {
+          "expr": "vllm:kv_cache_usage_perc * 100",
+          "legendFormat": "kv cache %",
+          "refId": "A"
+        },
+        {
+          "expr": "increase(vllm:num_preemptions_total[5m])",
+          "legendFormat": "preemptions / 5m",
+          "refId": "B"
+        }
+      ],
+      "title": "vLLM KV Cache & Preemptions",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 65 },
+      "id": 105,
+      "title": "Kubernetes Resources",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 66 },
+      "id": 16,
+      "targets": [
+        {
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"llm-chat\", container!=\"\", image!=\"\"}[5m])) by (pod)",
+          "legendFormat": "{{pod}} usage",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(kube_pod_container_resource_requests{namespace=\"llm-chat\", resource=\"cpu\"}) by (pod)",
+          "legendFormat": "{{pod}} request",
+          "refId": "B"
+        }
+      ],
+      "title": "CPU Usage vs Request (cores)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "decgbytes",
+          "decimals": 2
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 66 },
+      "id": 17,
+      "targets": [
+        {
+          "expr": "sum(container_memory_working_set_bytes{namespace=\"llm-chat\", container!=\"\", image!=\"\"}) by (pod) / 1024 / 1024 / 1024",
+          "legendFormat": "{{pod}} working set",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(kube_pod_container_resource_requests{namespace=\"llm-chat\", resource=\"memory\"}) by (pod) / 1024 / 1024 / 1024",
+          "legendFormat": "{{pod}} request",
+          "refId": "B"
+        }
+      ],
+      "title": "Memory Usage vs Request (GiB)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "percent",
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 74 },
+      "id": 18,
+      "targets": [
+        {
+          "expr": "100 * sum(rate(container_cpu_cfs_throttled_periods_total{namespace=\"llm-chat\", container!=\"\", image!=\"\"}[5m])) by (pod) / clamp_min(sum(rate(container_cpu_cfs_periods_total{namespace=\"llm-chat\", container!=\"\", image!=\"\"}[5m])) by (pod), 1)",
+          "legendFormat": "{{pod}} throttled",
+          "refId": "A"
+        }
+      ],
+      "title": "CPU Throttling (%)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 74 },
+      "id": 19,
+      "targets": [
+        {
+          "expr": "100 * kubelet_volume_stats_used_bytes{namespace=\"llm-chat\", persistentvolumeclaim=~\"qdrant-data-pvc|llm-cache-pvc\"} / kubelet_volume_stats_capacity_bytes{namespace=\"llm-chat\", persistentvolumeclaim=~\"qdrant-data-pvc|llm-cache-pvc\"}",
+          "legendFormat": "{{persistentvolumeclaim}}",
+          "refId": "A"
+        }
+      ],
+      "title": "PVC Disk Usage (%)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "Bps"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 82 },
+      "id": 20,
+      "targets": [
+        {
+          "expr": "sum(rate(container_fs_reads_bytes_total{namespace=\"llm-chat\", container!=\"\", image!=\"\"}[5m])) by (pod)",
+          "legendFormat": "{{pod}} read",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(container_fs_writes_bytes_total{namespace=\"llm-chat\", container!=\"\", image!=\"\"}[5m])) by (pod)",
+          "legendFormat": "{{pod}} write",
+          "refId": "B"
+        }
+      ],
+      "title": "Container Disk IO (bytes/s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "Bps"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 82 },
+      "id": 21,
+      "targets": [
+        {
+          "expr": "sum(rate(container_network_receive_bytes_total{namespace=\"llm-chat\"}[5m])) by (pod)",
+          "legendFormat": "{{pod}} rx",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(container_network_transmit_bytes_total{namespace=\"llm-chat\"}[5m])) by (pod)",
+          "legendFormat": "{{pod}} tx",
+          "refId": "B"
+        }
+      ],
+      "title": "Pod Network IO (bytes/s)",
       "type": "timeseries"
     },
     {
@@ -396,21 +577,16 @@
           "unit": "short"
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 57 },
-      "id": 15,
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 90 },
+      "id": 22,
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_retrieval_hits_raw_bucket[5m])) by (le))",
-          "legendFormat": "raw p50 (pre-MMR)",
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"llm-chat\"}[30m])) by (pod)",
+          "legendFormat": "{{pod}} restarts",
           "refId": "A"
-        },
-        {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_retrieval_hits_selected_bucket[5m])) by (le))",
-          "legendFormat": "selected p50 (post-MMR)",
-          "refId": "B"
         }
       ],
-      "title": "Retrieval Hits: Raw vs Selected",
+      "title": "Pod Restarts (last 30m)",
       "type": "timeseries"
     }
   ],

@@ -109,7 +109,19 @@ resource "helm_release" "nvidia_device_plugin" {
 }
 
 ###############################################################################
-# 3. S3 data access for the head node — allows Ray pods to read/write the
+# 3. Observability: kube-prometheus-stack + Ray/Qdrant/vLLM scraping +
+#    Grafana dashboards (RAG pipeline + Ray cluster + LLM app).
+###############################################################################
+module "observability" {
+  source = "../../../modules/observability"
+
+  ray_namespace = var.kubernetes_namespace
+
+  depends_on = [module.eks]
+}
+
+###############################################################################
+# 4. S3 data access for the head node — allows Ray pods to read/write the
 #    ingest bucket (docs/ + meta/ prefixes) without outbound IAM credentials.
 #
 #    Lab-grade: attaches an inline policy to the head MNG node role.
@@ -119,7 +131,7 @@ resource "helm_release" "nvidia_device_plugin" {
 ###############################################################################
 resource "aws_iam_role_policy" "head_s3_data" {
   name = "${local.name_prefix}-head-s3-data"
-  role = module.eks.eks_managed_node_groups["head"].iam_role_name
+  role = module.eks.node_iam_role_names["head"]
 
   policy = jsonencode({
     Version = "2012-10-17"

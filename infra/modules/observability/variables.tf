@@ -41,6 +41,12 @@ variable "persist_grafana" {
   default     = false
 }
 
+variable "ops_node_selector" {
+  description = "Optional nodeSelector for Prometheus and Grafana pods (e.g. {node-type = \"ops\"}). Empty map means no selector."
+  type        = map(string)
+  default     = {}
+}
+
 variable "tags" {
   description = "Tags (unused on K8s resources but kept for module-uniformity)"
   type        = map(string)

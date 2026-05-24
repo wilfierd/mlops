@@ -38,10 +38,12 @@ resource "helm_release" "kube_prom_stack" {
         podMonitorSelectorNilUsesHelmValues     = false
         podMonitorNamespaceSelector             = {}
         ruleSelectorNilUsesHelmValues           = false
+        nodeSelector = var.ops_node_selector
       }
     }
     grafana = {
       adminPassword = local.grafana_password
+      nodeSelector  = var.ops_node_selector
       persistence = {
         enabled = var.persist_grafana
       }
@@ -97,6 +99,62 @@ resource "kubectl_manifest" "ray_service_monitor" {
   depends_on = [helm_release.kube_prom_stack]
 }
 
+# Qdrant: pods expose /metrics on port 6333 with label app=qdrant.
+resource "kubectl_manifest" "qdrant_pod_monitor" {
+  yaml_body = yamlencode({
+    apiVersion = "monitoring.coreos.com/v1"
+    kind       = "PodMonitor"
+    metadata = {
+      name      = "qdrant-metrics"
+      namespace = kubernetes_namespace.monitoring.metadata[0].name
+      labels = {
+        release = "kube-prom-stack"
+      }
+    }
+    spec = {
+      namespaceSelector = { matchNames = [var.ray_namespace] }
+      selector = {
+        matchLabels = { "app.kubernetes.io/name" = "qdrant" }
+      }
+      podMetricsEndpoints = [{
+        port     = "http"
+        path     = "/metrics"
+        interval = "15s"
+      }]
+    }
+  })
+
+  depends_on = [helm_release.kube_prom_stack]
+}
+
+# vLLM: pods expose /metrics on port 8000 with label app=vllm-server.
+resource "kubectl_manifest" "vllm_pod_monitor" {
+  yaml_body = yamlencode({
+    apiVersion = "monitoring.coreos.com/v1"
+    kind       = "PodMonitor"
+    metadata = {
+      name      = "vllm-metrics"
+      namespace = kubernetes_namespace.monitoring.metadata[0].name
+      labels = {
+        release = "kube-prom-stack"
+      }
+    }
+    spec = {
+      namespaceSelector = { matchNames = [var.ray_namespace] }
+      selector = {
+        matchLabels = { "app.kubernetes.io/name" = "vllm-server" }
+      }
+      podMetricsEndpoints = [{
+        port     = "http"
+        path     = "/metrics"
+        interval = "15s"
+      }]
+    }
+  })
+
+  depends_on = [helm_release.kube_prom_stack]
+}
+
 # Two dashboards, each in its own ConfigMap so they show as separate entries
 # in Grafana. Sidecar auto-imports any ConfigMap with label grafana_dashboard=1.
 
@@ -130,6 +188,24 @@ resource "kubernetes_config_map" "app_dashboard" {
 
   data = {
     "llm-chat-app.json" = file("${path.module}/dashboards/llm-chat-app.json")
+  }
+
+  depends_on = [helm_release.kube_prom_stack]
+}
+
+# RAG pipeline dashboard — QA latency, fallback rate, per-step breakdown,
+# ingest throughput, vLLM queue depth, Qdrant search latency, GPU utilization.
+resource "kubernetes_config_map" "rag_pipeline_dashboard" {
+  metadata {
+    name      = "grafana-dashboard-rag-pipeline"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+    labels = {
+      grafana_dashboard = "1"
+    }
+  }
+
+  data = {
+    "rag-pipeline.json" = file("${path.module}/dashboards/rag-pipeline.json")
   }
 
   depends_on = [helm_release.kube_prom_stack]

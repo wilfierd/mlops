@@ -28,6 +28,22 @@ from qdrant_client import models as qm
 
 log = logging.getLogger(__name__)
 
+# Lazy-initialized inside ingest_task (Ray task context) to avoid importing
+# ray.util.metrics at module level where Ray is not yet initialized.
+_CHUNKS_CTR = None
+
+
+def _chunks_counter():
+    global _CHUNKS_CTR
+    if _CHUNKS_CTR is None:
+        from ray.util.metrics import Counter
+        _CHUNKS_CTR = Counter(
+            "rag_ingest_chunks_total",
+            description="Chunks written to Qdrant by ingest_task",
+        )
+    return _CHUNKS_CTR
+
+
 # ── env ────────────────────────────────────────────────────────────────────────
 S3_PREFIX_DOCS = os.environ.get("S3_PREFIX_DOCS", "docs/")
 QDRANT_HOST = os.environ.get("QDRANT_HOST", "qdrant-0.qdrant.llm-chat.svc.cluster.local")
@@ -223,6 +239,7 @@ async def ingest_task(doc_id: str, ext: str, filename: str, bucket: str) -> None
                     for i in range(len(batch))
                 ],
             )
+            _chunks_counter().inc(len(batch))
 
         # [f] Mark ready
         meta_write(s3, bucket, doc_id, {

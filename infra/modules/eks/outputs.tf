@@ -24,3 +24,9 @@ output "node_iam_role_arns" {
     for k, ng in module.eks.eks_managed_node_groups : k => ng.iam_role_arn
   }
 }
+
+output "node_iam_role_names" {
+  value = {
+    for k, ng in module.eks.eks_managed_node_groups : k => ng.iam_role_name
+  }
+}

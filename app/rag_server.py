@@ -23,6 +23,7 @@ from ray import serve
 from ray.serve.handle import DeploymentHandle
 
 from app.embedder import E5OnnxEmbedder
+from app.metrics import RagMetrics
 from app.ingest import (
     ALLOWED_MIMES,
     EXT_TO_MIME,
@@ -237,6 +238,7 @@ class RagApi:
         self.embedder = embedder
         self.s3 = boto3.client("s3")
         self._vllm = AsyncOpenAI(base_url=VLLM_BASE_URL, api_key="not-needed")
+        self._m = RagMetrics()
         self._reaper_bg = asyncio.get_event_loop().create_task(self._reaper_loop())
 
     async def _reaper_loop(self) -> None:
@@ -327,8 +329,10 @@ class RagApi:
         if meta:
             status = meta.get("status")
             if status == "ready":
+                self._m.ingest_docs.inc(tags={"result": "already_ready"})
                 return {"doc_id": doc_id, "status": "ready", "num_chunks": meta.get("num_chunks")}
             if status == "processing":
+                self._m.ingest_docs.inc(tags={"result": "already_processing"})
                 return {"doc_id": doc_id, "status": "processing"}
             # failed or deleted → falls through to retry path
 
@@ -353,6 +357,7 @@ class RagApi:
 
         # [6] Submit Ray Task (fire-and-forget; meta tracks progress)
         ingest_task.remote(doc_id, ext, filename, S3_BUCKET)
+        self._m.ingest_docs.inc(tags={"result": "accepted"})
 
         # [7] Return 202 Accepted
         return {"doc_id": doc_id, "status": "processing"}
@@ -439,6 +444,8 @@ class RagApi:
         try:
             await asyncio.wait_for(QA_INFLIGHT.acquire(), timeout=0.1)
         except asyncio.TimeoutError:
+            self._m.qa_fallbacks.inc(tags={"reason": "backpressure"})
+            self._m.qa_requests.inc(tags={"status": "fallback"})
             raise HTTPException(
                 status_code=429,
                 detail={"error": "busy_try_again", "fallback_reason": "backpressure"},
@@ -446,13 +453,18 @@ class RagApi:
 
         t_start = time.monotonic()
         latency: dict[str, float] = {}
+        self._m.record_qa_start()
+        _fallback_reason: str | None = None
+        _is_error = False
         try:
             # [1] Validate question
             q = request.question.strip()
             if len(q) <= 3:
+                _is_error = True
                 raise HTTPException(status_code=400, detail="question_too_short")
             q_tok = _count_tokens(q)
             if q_tok > 500:
+                _is_error = True
                 raise HTTPException(status_code=400, detail="question_too_long")
 
             # [2] Verify each requested doc_id is ready
@@ -460,6 +472,7 @@ class RagApi:
                 for did in request.doc_ids:
                     meta = await asyncio.to_thread(meta_read, self.s3, S3_BUCKET, did)
                     if not meta or meta.get("status") != "ready":
+                        _is_error = True
                         raise HTTPException(status_code=400, detail=f"doc_not_ready: {did}")
 
             # [3] Embed query with "query: " prefix required by e5 model
@@ -470,10 +483,12 @@ class RagApi:
                     timeout=_TIMEOUTS["embed"],
                 )
             except asyncio.TimeoutError:
+                _fallback_reason = "embed_timeout"
                 return QAResponse(
-                    answer="", sources=[], latency_ms=latency, fallback_reason="embed_timeout"
+                    answer="", sources=[], latency_ms=latency, fallback_reason=_fallback_reason
                 )
             latency["embed"] = round((time.monotonic() - t0) * 1000, 1)
+            self._m.record_step("embed", latency["embed"])
             query_vec: list[float] = embed_resp.vectors[0]
 
             # [4] Qdrant search top-20 (pull wider for MMR diversification)
@@ -498,26 +513,31 @@ class RagApi:
                     timeout=_TIMEOUTS["qdrant"],
                 )
             except asyncio.TimeoutError:
+                _fallback_reason = "qdrant_timeout"
                 return QAResponse(
-                    answer="", sources=[], latency_ms=latency, fallback_reason="qdrant_timeout"
+                    answer="", sources=[], latency_ms=latency, fallback_reason=_fallback_reason
                 )
             except Exception:
+                _is_error = True
                 raise HTTPException(status_code=503, detail="qdrant unavailable")
             latency["qdrant"] = round((time.monotonic() - t0) * 1000, 1)
+            self._m.record_step("qdrant", latency["qdrant"])
 
             # [5] No relevant hits (all below score_threshold or collection empty)
             if not hits_raw:
+                _fallback_reason = "no_hits"
                 return QAResponse(
                     answer="Tôi không tìm thấy thông tin trong tài liệu.",
                     sources=[],
                     latency_ms=latency,
-                    fallback_reason="no_hits",
+                    fallback_reason=_fallback_reason,
                 )
 
             # [6] MMR rerank → top_k diverse results
             t0 = time.monotonic()
             hits = _mmr_rerank(query_vec, hits_raw, k=request.top_k, lambda_=0.5)
             latency["mmr"] = round((time.monotonic() - t0) * 1000, 1)
+            self._m.record_step("mmr", latency["mmr"])
 
             # [7] Build context with source attribution headers
             context_parts = [
@@ -550,12 +570,15 @@ class RagApi:
                     timeout=_TIMEOUTS["vllm"],
                 )
             except asyncio.TimeoutError:
+                _fallback_reason = "llm_timeout"
                 return QAResponse(
-                    answer="", sources=[], latency_ms=latency, fallback_reason="llm_timeout"
+                    answer="", sources=[], latency_ms=latency, fallback_reason=_fallback_reason
                 )
             except Exception:
+                _is_error = True
                 raise HTTPException(status_code=503, detail="llm unavailable")
             latency["llm"] = round((time.monotonic() - t0) * 1000, 1)
+            self._m.record_step("llm", latency["llm"])
             latency["total"] = round((time.monotonic() - t_start) * 1000, 1)
 
             answer = resp.choices[0].message.content or ""
@@ -575,6 +598,8 @@ class RagApi:
 
         finally:
             QA_INFLIGHT.release()
+            total_ms = round((time.monotonic() - t_start) * 1000, 1)
+            self._m.record_qa_end(total_ms, _fallback_reason, error=_is_error)
 
 
 rag_app = RagApi.bind(Embedder.bind())  # type: ignore[attr-defined]

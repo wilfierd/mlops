@@ -54,3 +54,16 @@ output "kubeconfig_command" {
 output "gpu_check_command" {
   value = "kubectl get nodes -l node-type=gpu-worker -o jsonpath='{range .items[*]}{.metadata.name}{\"\\t\"}{.status.allocatable.nvidia\\.com/gpu}{\"\\n\"}{end}'"
 }
+
+output "grafana_password" {
+  value     = module.observability.grafana_admin_password
+  sensitive = true
+}
+
+output "port_forward_grafana" {
+  value = module.observability.port_forward_grafana_command
+}
+
+output "port_forward_prometheus" {
+  value = module.observability.port_forward_prometheus_command
+}

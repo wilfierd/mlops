@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAG Q&A</title>
+  <script defer src="/static/alpine.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    [x-cloak] { display: none !important; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: #f5f5f5;
+      color: #1a1a1a;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1e40af;
+      color: #fff;
+      padding: 0.875rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 1rem;
+      padding: 1rem;
+      max-width: 1280px;
+      margin: 0 auto;
+      height: calc(100vh - 52px);
+    }
+    @media (max-width: 768px) {
+      .layout { grid-template-columns: 1fr; height: auto; }
+    }
+
+    .panel {
+      background: #fff;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 0.875rem 1rem;
+      border-bottom: 1px solid #e5e7eb;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: #374151;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .panel-body { flex: 1; overflow-y: auto; padding: 1rem; }
+
+    /* Upload */
+    .upload-zone {
+      border: 2px dashed #d1d5db;
+      border-radius: 6px;
+      padding: 1.25rem;
+      text-align: center;
+      transition: border-color 0.15s, background 0.15s;
+      margin-bottom: 1rem;
+    }
+    .upload-zone:hover, .upload-zone.upload-hover { border-color: #3b82f6; background: #eff6ff; }
+    .upload-zone input[type=file] { display: none; }
+    .upload-zone label { cursor: pointer; display: block; }
+    .upload-btn {
+      display: inline-block;
+      margin-top: 0.5rem;
+      padding: 0.4rem 1rem;
+      background: #3b82f6;
+      color: #fff;
+      border-radius: 5px;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .upload-hint { font-size: 0.78rem; color: #9ca3af; margin-top: 0.25rem; }
+
+    /* Doc list */
+    .doc-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.6rem 0.75rem;
+      border-radius: 6px;
+      border: 1px solid #e5e7eb;
+      margin-bottom: 0.5rem;
+      font-size: 0.85rem;
+    }
+    .doc-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .doc-chunks { font-size: 0.75rem; color: #9ca3af; white-space: nowrap; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 99px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .badge-ready      { background: #dcfce7; color: #15803d; }
+    .badge-processing { background: #fef9c3; color: #854d0e; }
+    .badge-failed     { background: #fee2e2; color: #b91c1c; }
+    .badge-uploaded   { background: #e0e7ff; color: #3730a3; }
+
+    .btn-icon {
+      background: none; border: none; cursor: pointer;
+      color: #9ca3af; padding: 0.2rem; border-radius: 4px; line-height: 1; font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+    .btn-icon:hover { color: #ef4444; background: #fee2e2; }
+
+    /* Spinner */
+    .spinner {
+      display: inline-block;
+      width: 0.85rem; height: 0.85rem;
+      border: 2px solid #e5e7eb;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .empty-state { text-align: center; padding: 2rem 1rem; color: #9ca3af; font-size: 0.85rem; }
+
+    .error-msg {
+      background: #fee2e2; color: #b91c1c;
+      border-radius: 5px; padding: 0.5rem 0.75rem;
+      font-size: 0.82rem; margin-bottom: 0.75rem;
+    }
+
+    /* Chat */
+    .chat-area {
+      flex: 1; overflow-y: auto; padding: 1rem;
+      display: flex; flex-direction: column; gap: 1.25rem;
+    }
+    .chat-question { display: flex; justify-content: flex-end; margin-bottom: 0.5rem; }
+    .chat-question span {
+      background: #3b82f6; color: #fff;
+      padding: 0.5rem 0.875rem;
+      border-radius: 18px 18px 4px 18px;
+      max-width: 75%; font-size: 0.88rem; line-height: 1.4;
+    }
+    .chat-answer {
+      background: #f9fafb; border: 1px solid #e5e7eb;
+      border-radius: 4px 18px 18px 18px;
+      padding: 0.75rem 1rem; font-size: 0.88rem; line-height: 1.6; white-space: pre-wrap;
+    }
+    .chat-answer.loading  { color: #9ca3af; font-style: italic; }
+    .chat-answer.error    { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+    .chat-answer.fallback { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+
+    .sources-toggle {
+      margin-top: 0.4rem;
+      background: none; border: none; cursor: pointer;
+      font-size: 0.78rem; color: #6b7280; padding: 0.2rem 0.4rem; border-radius: 4px;
+    }
+    .sources-toggle:hover { background: #f3f4f6; color: #374151; }
+
+    .sources-list { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.4rem; }
+    .source-card {
+      background: #f3f4f6; border: 1px solid #e5e7eb;
+      border-radius: 5px; padding: 0.5rem 0.75rem; font-size: 0.78rem;
+    }
+    .source-meta { font-weight: 600; color: #374151; margin-bottom: 0.2rem; display: flex; justify-content: space-between; }
+    .source-score { font-weight: 400; color: #9ca3af; }
+    .source-text { color: #6b7280; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+
+    .latency { font-size: 0.72rem; color: #9ca3af; margin-top: 0.4rem; text-align: right; }
+
+    /* Input */
+    .input-area {
+      padding: 0.75rem 1rem; border-top: 1px solid #e5e7eb;
+      display: flex; gap: 0.5rem; flex-shrink: 0;
+    }
+    .input-area textarea {
+      flex: 1; border: 1px solid #d1d5db; border-radius: 6px;
+      padding: 0.5rem 0.75rem; font-size: 0.88rem;
+      resize: none; font-family: inherit; line-height: 1.4; outline: none;
+    }
+    .input-area textarea:focus { border-color: #3b82f6; }
+    .ask-btn {
+      padding: 0.5rem 1.25rem; background: #3b82f6; color: #fff;
+      border: none; border-radius: 6px; font-size: 0.88rem; font-weight: 600;
+      cursor: pointer; align-self: flex-end; white-space: nowrap;
+    }
+    .ask-btn:hover:not(:disabled) { background: #2563eb; }
+    .ask-btn:disabled { background: #93c5fd; cursor: not-allowed; }
+
+    .count-badge {
+      background: #e5e7eb; border-radius: 99px;
+      padding: 0.1rem 0.45rem; font-size: 0.72rem; color: #6b7280; font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round"
+      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+  </svg>
+  <h1>RAG Document Q&A</h1>
+</header>
+
+<div class="layout" x-data="ragApp()">
+
+  <!-- ── Left: Documents ───────────────────────────────────── -->
+  <div class="panel">
+    <div class="panel-header">
+      <span>Tài liệu</span>
+      <span class="count-badge" x-text="docs.length"></span>
+    </div>
+    <div class="panel-body">
+
+      <!-- Upload zone -->
+      <div class="upload-zone"
+           @dragover.prevent
+           @drop.prevent="onDrop($event)"
+           :class="{ 'upload-hover': dragOver }"
+           @dragenter="dragOver=true" @dragleave="dragOver=false">
+        <label>
+          <input type="file" accept=".pdf,.txt,.md,.docx" @change="uploadFile($event)" :disabled="uploading">
+          <div x-show="!uploading">
+            <svg width="24" height="24" fill="none" stroke="#9ca3af" stroke-width="2" viewBox="0 0 24 24"
+                 style="margin: 0 auto 0.4rem">
+              <path stroke-linecap="round" stroke-linejoin="round"
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+            </svg>
+            <div>Kéo thả hoặc <span class="upload-btn">Chọn file</span></div>
+            <div class="upload-hint">PDF · TXT · MD · DOCX — tối đa 50 MiB</div>
+          </div>
+          <div x-show="uploading" style="color:#6b7280; padding: 0.25rem 0;">
+            <span class="spinner"></span> Đang tải lên...
+          </div>
+        </label>
+      </div>
+
+      <!-- Upload error -->
+      <div class="error-msg" x-show="uploadError" x-cloak x-text="uploadError"></div>
+
+      <!-- Empty state -->
+      <template x-if="docs.length === 0">
+        <div class="empty-state">Chưa có tài liệu nào.<br>Tải lên file để bắt đầu.</div>
+      </template>
+
+      <!-- Doc list -->
+      <template x-for="doc in docsSorted" :key="doc.doc_id">
+        <div class="doc-item">
+          <span :class="statusBadgeClass(doc.status)" class="badge">
+            <span x-show="doc.status === 'processing'"
+                  class="spinner"
+                  style="width:0.65rem;height:0.65rem;border-width:1.5px"></span>
+            <span x-text="statusLabel(doc.status)"></span>
+          </span>
+          <span class="doc-name"
+                :title="doc.filename || doc.doc_id"
+                x-text="doc.filename || doc.doc_id"></span>
+          <span class="doc-chunks"
+                x-show="doc.num_chunks"
+                x-text="doc.num_chunks + ' chunks'"></span>
+          <button class="btn-icon" @click="deleteDoc(doc.doc_id)" title="Xoá">✕</button>
+        </div>
+      </template>
+
+    </div>
+  </div>
+
+  <!-- ── Right: QA Chat ────────────────────────────────────── -->
+  <div class="panel">
+    <div class="panel-header">
+      <span>Chat Q&A</span>
+      <button x-show="conversations.length > 0"
+              @click="conversations = []"
+              style="background:none;border:none;cursor:pointer;font-size:0.75rem;color:#9ca3af">
+        Xoá lịch sử
+      </button>
+    </div>
+
+    <div class="chat-area" x-ref="chatArea">
+      <template x-if="conversations.length === 0">
+        <div class="empty-state" style="margin: auto;">
+          Hỏi câu hỏi về các tài liệu đã tải lên.
+        </div>
+      </template>
+
+      <template x-for="(item, idx) in conversations" :key="idx">
+        <div>
+          <!-- Question bubble -->
+          <div class="chat-question">
+            <span x-text="item.question"></span>
+          </div>
+
+          <!-- Loading -->
+          <div x-show="item.loading" class="chat-answer loading">
+            <span class="spinner"></span> Đang xử lý...
+          </div>
+
+          <!-- Error -->
+          <div x-show="item.error && !item.loading"
+               class="chat-answer error"
+               x-text="item.error"></div>
+
+          <!-- Answer -->
+          <template x-if="!item.loading && !item.error && item.answer !== null">
+            <div>
+              <div :class="item.fallback ? 'chat-answer fallback' : 'chat-answer'"
+                   x-text="item.answer"></div>
+
+              <!-- Sources -->
+              <template x-if="item.sources && item.sources.length > 0">
+                <div>
+                  <button class="sources-toggle" @click="item.showSources = !item.showSources">
+                    <span x-text="item.showSources ? '▲ Ẩn nguồn' : '▼ ' + item.sources.length + ' nguồn'"></span>
+                  </button>
+                  <div class="sources-list" x-show="item.showSources">
+                    <template x-for="(src, si) in item.sources" :key="si">
+                      <div class="source-card">
+                        <div class="source-meta">
+                          <span x-text="'[Nguồn ' + (si+1) + '] ' + (src.doc_title || src.doc_id)"></span>
+                          <span class="source-score"
+                                x-text="'đoạn ' + src.chunk_idx + ' · ' + (src.score * 100).toFixed(0) + '%'"></span>
+                        </div>
+                        <div class="source-text" x-text="src.text"></div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Latency breakdown -->
+              <div class="latency"
+                   x-show="item.latency && item.latency.total"
+                   x-text="'⏱ ' + (item.latency.total/1000).toFixed(1) + 's · embed ' + item.latency.embed + 'ms · qdrant ' + item.latency.qdrant + 'ms · llm ' + item.latency.llm + 'ms'">
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+
+    <!-- Input area -->
+    <div class="input-area">
+      <textarea
+        x-model="question"
+        placeholder="Nhập câu hỏi về tài liệu... (Enter để gửi, Shift+Enter để xuống dòng)"
+        rows="2"
+        @keydown.enter.prevent="if (!$event.shiftKey) askQuestion()"
+        :disabled="asking"
+      ></textarea>
+      <button class="ask-btn"
+              @click="askQuestion()"
+              :disabled="asking || !question.trim()">
+        <span x-show="!asking">Hỏi</span>
+        <span x-show="asking">
+          <span class="spinner" style="border-color:#bfdbfe; border-top-color:#fff"></span>
+        </span>
+      </button>
+    </div>
+  </div>
+
+</div><!-- .layout -->
+
+<script>
+function ragApp() {
+  return {
+    docs: [],
+    uploading: false,
+    uploadError: null,
+    dragOver: false,
+
+    question: '',
+    asking: false,
+    conversations: [],
+
+    // ── computed ──────────────────────────────────────────────
+
+    get docsSorted() {
+      const order = { processing: 0, uploaded: 1, ready: 2, failed: 3 };
+      return [...this.docs].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+    },
+
+    // ── lifecycle ─────────────────────────────────────────────
+
+    async init() {
+      await this.loadDocs();
+      setInterval(() => this.maybePoll(), 3000);
+    },
+
+    // ── documents ─────────────────────────────────────────────
+
+    async loadDocs() {
+      try {
+        const r = await fetch('/documents');
+        if (!r.ok) return;
+        this.docs = await r.json();
+      } catch (_) {}
+    },
+
+    async maybePoll() {
+      if (this.docs.some(d => d.status === 'processing' || d.status === 'uploaded')) {
+        await this.loadDocs();
+      }
+    },
+
+    async uploadFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      this.uploading = true;
+      this.uploadError = null;
+      this.dragOver = false;
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const r = await fetch('/documents', { method: 'POST', body: fd });
+        const data = await r.json();
+        if (!r.ok) {
+          const msg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+          throw new Error(msg);
+        }
+        await this.loadDocs();
+      } catch (e) {
+        this.uploadError = e.message;
+      } finally {
+        this.uploading = false;
+        event.target.value = '';
+      }
+    },
+
+    onDrop(event) {
+      this.dragOver = false;
+      const file = event.dataTransfer.files[0];
+      if (!file) return;
+      // Synthesise a minimal event-like object for uploadFile
+      this.uploadFile({ target: { files: [file], value: '' } });
+    },
+
+    async deleteDoc(docId) {
+      try {
+        const r = await fetch(`/documents/${docId}`, { method: 'DELETE' });
+        if (r.ok || r.status === 404) {
+          this.docs = this.docs.filter(d => d.doc_id !== docId);
+        }
+      } catch (_) {}
+    },
+
+    // ── QA ────────────────────────────────────────────────────
+
+    async askQuestion() {
+      const q = this.question.trim();
+      if (!q || this.asking) return;
+      this.asking = true;
+      this.question = '';
+
+      const entry = {
+        question: q, answer: null, sources: [],
+        latency: {}, fallback: null,
+        loading: true, error: null, showSources: false,
+      };
+      this.conversations.push(entry);
+      const idx = this.conversations.length - 1;
+
+      await this.$nextTick();
+      this.$refs.chatArea.scrollTop = this.$refs.chatArea.scrollHeight;
+
+      try {
+        const r = await fetch('/qa', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ question: q, top_k: 5, score_threshold: 0.5 }),
+        });
+        const data = await r.json();
+        if (!r.ok) {
+          const msg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+          throw new Error(msg);
+        }
+        this.conversations[idx] = {
+          question: q,
+          answer: data.answer || '',
+          sources: data.sources || [],
+          latency: data.latency_ms || {},
+          fallback: data.fallback_reason || null,
+          loading: false,
+          error: null,
+          showSources: false,
+        };
+      } catch (e) {
+        this.conversations[idx] = { ...this.conversations[idx], loading: false, error: e.message };
+      } finally {
+        this.asking = false;
+        await this.$nextTick();
+        this.$refs.chatArea.scrollTop = this.$refs.chatArea.scrollHeight;
+      }
+    },
+
+    // ── helpers ───────────────────────────────────────────────
+
+    statusLabel(status) {
+      const labels = {
+        ready: 'Sẵn sàng', processing: 'Đang xử lý',
+        failed: 'Lỗi', uploaded: 'Đã tải', deleted: 'Đã xoá',
+      };
+      return labels[status] || status;
+    },
+
+    statusBadgeClass(status) {
+      const classes = {
+        ready: 'badge-ready', processing: 'badge-processing',
+        failed: 'badge-failed', uploaded: 'badge-uploaded',
+      };
+      return classes[status] || '';
+    },
+  };
+}
+</script>
+</body>
+</html>

@@ -1063,27 +1063,31 @@ kubectl get node <gpu-node> -o jsonpath='{.status.allocatable.nvidia\.com/gpu}'
 
 Hiện `app/server.py` chỉ có inline HTML chat đơn giản. RAG UI cần thêm: upload form, document list, ingest status polling, QA box, source citations expand/collapse, optional latency breakdown panel.
 
-| Aspect | **HTMX + Alpine.js** (recommended MVP) | **React + Vite + TypeScript** |
-|---|---|---|
-| Stack | FastAPI render Jinja2 HTML + HTMX swap | SPA build, FastAPI = API-only |
-| Setup | 0 build step; chỉ thêm template + `<script src=htmx>` | npm install, vite config, CORS setup |
-| Code | ~300 LOC HTML+Jinja | ~1,000 LOC TS + components |
-| Effort | 0.5 ngày | 1.5 ngày |
-| Tốc độ first paint | Rất nhanh (SSR) | Cần JS bundle parse |
-| Streaming response (Phase 2) | SSE qua HTMX `hx-ext=sse` — OK | EventSource native — OK |
-| Maintain dài hạn | Khi UI phức tạp > 5 màn → khó | Scale tốt với component model |
-| Demo "đẹp" cho stakeholder | Đủ; hơi ascetic | Polished hơn, dễ tweak CSS |
+| Aspect | **Alpine.js zero-build** ✅ (implemented P7) | **HTMX + Jinja partials** (original plan) | **React + Vite + TypeScript** |
+|---|---|---|---|
+| Stack | Single HTML file + vendored Alpine.js; calls existing JSON API | FastAPI renders Jinja2 HTML partials + HTMX swap | SPA build, FastAPI = API-only |
+| Setup | 0 build step; Alpine vendored in `app/static/` | 0 build step; thêm Jinja2 template per partial | npm install, vite config, CORS setup |
+| Code | ~530 LOC HTML+JS | ~400 LOC HTML+Jinja | ~1,000 LOC TS + components |
+| Backend changes | `GET /` serves static HTML; JSON API unchanged | mỗi endpoint cần trả cả JSON lẫn HTML partial | không cần thay đổi API |
+| CDN dependency | ❌ none — Alpine vendored, no NAT needed | ❌ none | có thể cần CDN cho fonts/icons |
+| Streaming (Phase 2) | `EventSource` native — OK | HTMX `hx-ext=sse` — OK | EventSource native — OK |
+| Maintain dài hạn | Khi UI phức tạp > 5 màn → khó | tương tự | Scale tốt với component model |
 
-**Khuyến nghị:**
-- **MVP demo:** HTMX. Lý do: lab project, demo course, 5–8 màn cơ bản, 0 build step → cluster-up + cài app + show xong trong 1 buổi.
-- **Nếu sau MVP định pitch như product**, migrate sang React+Vite ở Phase 11+.
+**Quyết định P7:** Alpine-only, gọi JSON API trực tiếp. Lý do thực tế:
+- JSON API (P5/P6) đã build và test hoàn chỉnh — không cần thêm HTML-rendering logic vào backend.
+- Không phụ thuộc CDN: Alpine.js 3.14.1 vendored tại `app/static/alpine.min.js`, phục vụ qua FastAPI StaticFiles — browser không cần ra internet.
+- Nếu sau MVP định pitch như product: migrate sang React+Vite ở Phase 11+.
 
 ```
-# HTMX UI surfaces (MVP)
-GET  /             → render home (upload form + chat box + doc list partial)
-POST /documents    → return doc card partial (htmx swap into list)
-GET  /documents    → list partial (poll every 3s for processing → ready)
-POST /qa           → return answer card partial (sources expandable)
+# Alpine-only UI surfaces (P7 implemented)
+GET  /             → serve app/templates/index.html (Alpine.js SPA)
+GET  /static/alpine.min.js → vendored Alpine (no CDN)
+
+# JSON API endpoints (unchanged, called by Alpine fetch())
+POST /documents    → 202 {doc_id, status}
+GET  /documents    → [{doc_id, status, filename, num_chunks, ...}]
+DELETE /documents/{id} → 204
+POST /qa           → {answer, sources[], latency_ms, fallback_reason}
 ```
 
 ---

@@ -11,7 +11,11 @@ import boto3
 import botocore.exceptions
 import numpy as np
 import tiktoken
+from pathlib import Path
+
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 from qdrant_client import models as qm
@@ -33,6 +37,11 @@ from app.ingest import (
 )
 
 api = FastAPI(title="RAG App")
+api.mount(
+    "/static",
+    StaticFiles(directory=Path(__file__).parent / "static"),
+    name="static",
+)
 
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
@@ -243,6 +252,13 @@ class RagApi:
             except Exception:
                 import logging
                 logging.getLogger(__name__).exception("reaper error")
+
+    # ── UI ───────────────────────────────────────────────────────────────────
+
+    @api.get("/", response_class=HTMLResponse)
+    async def ui_home(self) -> HTMLResponse:
+        html = (Path(__file__).parent / "templates" / "index.html").read_text()
+        return HTMLResponse(html)
 
     # ── Health ──────────────────────────────────────────────────────────────
 

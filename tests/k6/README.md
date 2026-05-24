@@ -114,6 +114,35 @@ PROM_SNAPSHOT=1 ./tests/k6/run-local.sh stress   # also dump vllm /metrics
 
 For day-to-day iteration the wrapper is overkill — plain `k6 run` is fine.
 
+## Autoscale evidence
+
+k6 measures request behavior; it does not by itself prove Kubernetes node
+autoscaling. To prove scale-up, capture Cluster Autoscaler and node evidence
+separately:
+
+```bash
+# Preconditions:
+# - GPU node group min=1 max=2
+# - Cluster Autoscaler is installed
+# - vllm-server has replicas=2, so vllm-server-1 can trigger scale-up
+bash tests/k6/autoscale-evidence.sh
+```
+
+The script writes `reports/autoscale-<timestamp>/` with:
+
+- `nodes-before.txt` / `nodes-after.txt` — GPU node count transition.
+- `pods-before.txt` / `pods-after.txt` — vLLM scheduling result.
+- `wait-vllm-server-1.txt` — second GPU pod readiness.
+- `ca-logs.txt` — Cluster Autoscaler scale-up decision.
+- `nodegroup-before.txt` / `nodegroup-after.txt` — EKS node group desired capacity.
+
+Use `run-local.sh` after this to evaluate the scaled system:
+
+```bash
+PROM_SNAPSHOT=1 tests/k6/run-local.sh load
+PROM_SNAPSHOT=1 tests/k6/run-local.sh stress
+```
+
 ## Tracing a single k6 request in app logs
 
 Every request sends `X-Request-Id: k6-<rand>-vu<N>-it<N>`. Grep the structured

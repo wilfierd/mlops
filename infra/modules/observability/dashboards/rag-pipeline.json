@@ -85,12 +85,12 @@
       "id": 3,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(ray_rag_qa_step_latency_ms_bucket) by (le, step))",
-          "legendFormat": "p95 {{step}}",
+          "expr": "histogram_quantile(0.95, sum(ray_rag_qa_step_latency_ms_bucket{step!=\"llm\"}) by (le, step))",
+          "legendFormat": "{{step}}",
           "refId": "A"
         }
       ],
-      "title": "QA Per-Step p95 Latency (embed / qdrant / mmr / llm)",
+      "title": "Retrieval Step p95 (embed / qdrant / mmr)",
       "type": "timeseries"
     },
     {
@@ -106,12 +106,21 @@
       "id": 4,
       "targets": [
         {
-          "expr": "sum(rate(ray_rag_qa_fallback_total[30m])) by (reason)",
+          "expr": "sum(increase(ray_rag_qa_fallback_total[$__range])) by (reason)",
           "legendFormat": "{{reason}}",
           "refId": "A"
         }
       ],
-      "title": "QA Fallback Rate by Reason",
+      "options": { "tooltip": { "mode": "multi" } },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "short",
+          "noValue": "0"
+        }
+      },
+      "title": "QA Fallback Count by Reason",
       "type": "timeseries"
     },
     {
@@ -139,11 +148,12 @@
       "type": "stat"
     },
     {
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 },
       "id": 101,
-      "title": "Ingest Pipeline",
-      "type": "row"
+      "title": "Ingest Pipeline (expand when uploading docs)",
+      "type": "row",
+      "panels": []
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
@@ -277,28 +287,47 @@
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 2 },
-          "unit": "short"
-        }
+        "defaults": { "unit": "short", "noValue": "0" }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 40 },
       "id": 11,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "auto"
+      },
       "targets": [
-        {
-          "expr": "collections_total",
-          "legendFormat": "collections",
-          "refId": "A"
-        },
         {
           "expr": "collections_vector_total",
           "legendFormat": "vectors",
-          "refId": "B"
+          "refId": "A"
         }
       ],
-      "title": "Qdrant Collection Points",
-      "type": "timeseries"
+      "title": "Indexed Vectors",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "noValue": "0" }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 40 },
+      "id": 23,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(grpc_responses_total[5m]))",
+          "legendFormat": "gRPC/s",
+          "refId": "A"
+        }
+      ],
+      "title": "Qdrant gRPC req/s",
+      "type": "stat"
     },
     {
       "collapsed": false,
@@ -432,16 +461,11 @@
       "targets": [
         {
           "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"llm-chat\", container!=\"\", image!=\"\"}[5m])) by (pod)",
-          "legendFormat": "{{pod}} usage",
+          "legendFormat": "{{pod}}",
           "refId": "A"
-        },
-        {
-          "expr": "sum(kube_pod_container_resource_requests{namespace=\"llm-chat\", resource=\"cpu\"}) by (pod)",
-          "legendFormat": "{{pod}} request",
-          "refId": "B"
         }
       ],
-      "title": "CPU Usage vs Request (cores)",
+      "title": "CPU Usage (cores)",
       "type": "timeseries"
     },
     {
@@ -459,16 +483,11 @@
       "targets": [
         {
           "expr": "sum(container_memory_working_set_bytes{namespace=\"llm-chat\", container!=\"\", image!=\"\"}) by (pod) / 1024 / 1024 / 1024",
-          "legendFormat": "{{pod}} working set",
+          "legendFormat": "{{pod}}",
           "refId": "A"
-        },
-        {
-          "expr": "sum(kube_pod_container_resource_requests{namespace=\"llm-chat\", resource=\"memory\"}) by (pod) / 1024 / 1024 / 1024",
-          "legendFormat": "{{pod}} request",
-          "refId": "B"
         }
       ],
-      "title": "Memory Usage vs Request (GiB)",
+      "title": "Memory Working Set (GiB)",
       "type": "timeseries"
     },
     {

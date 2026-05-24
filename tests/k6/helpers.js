@@ -21,6 +21,7 @@ import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.2/index.js';
 export const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:8000';
 export const DEFAULT_TOP_K = parseInt(__ENV.TOP_K || '3', 10);
 export const DEFAULT_SCORE_THRESHOLD = parseFloat(__ENV.SCORE_THRESHOLD || '0.5');
+export const SLOW_MS = parseInt(__ENV.SLOW_MS || '10000', 10);
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
@@ -124,10 +125,7 @@ export function assertQAOK(res, answer, fallback) {
     'qa: no fallback': () => fallback === null,
   });
   qaErrorRate.add(!ok);
-  const fast = check(res, {
-    'qa: under 10s':   (r) => r.timings.duration < 10000,
-  });
-  qaSlowRate.add(!fast);
+  qaSlowRate.add(res.timings.duration >= SLOW_MS);
   return ok;
 }
 
@@ -138,10 +136,7 @@ export function assertQAAccept(res) {
     'qa: 200 or 429': (r) => r.status === 200 || r.status === 429,
   });
   qaErrorRate.add(!ok);
-  const fast = check(res, {
-    'qa: under 10s':  (r) => r.timings.duration < 10000,
-  });
-  qaSlowRate.add(!fast);
+  qaSlowRate.add(res.timings.duration >= SLOW_MS);
   return ok;
 }
 

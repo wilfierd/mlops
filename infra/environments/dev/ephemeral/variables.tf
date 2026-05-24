@@ -117,14 +117,15 @@ variable "gpu_capacity_type" {
 }
 
 variable "gpu_min_size" {
-  type    = number
-  default = 2
+  description = "Keep one GPU node warm; Cluster Autoscaler can scale to gpu_max_size when vLLM replica 2 is pending."
+  type        = number
+  default     = 1
 }
 
 variable "gpu_desired_size" {
-  description = "2 GPU nodes up for vLLM scale-out. 2 x g4dn.xlarge = 8 G-family vCPU quota."
+  description = "Start with one GPU node. Cluster Autoscaler scales out to max_size=2 for vLLM replica 2."
   type        = number
-  default     = 2
+  default     = 1
 }
 
 variable "gpu_max_size" {

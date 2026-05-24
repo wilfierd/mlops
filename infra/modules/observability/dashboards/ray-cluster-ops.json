@@ -1,0 +1,203 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "tags": ["ray", "system"],
+  "time": {"from": "now-30m", "to": "now"},
+  "refresh": "10s",
+  "title": "Ray Cluster — Operations",
+  "uid": "ray-cluster-ops",
+  "templating": {
+    "list": [
+      {
+        "name": "app",
+        "label": "Application",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(ray_serve_num_router_requests_total{application!=\"\"}, application)",
+        "refresh": 1,
+        "sort": 1,
+        "current": {"text": "llm-chat", "value": "llm-chat"},
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Running replicas",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(ray_serve_deployment_replica_healthy{application=\"$app\"})",
+          "legendFormat": "running",
+          "refId": "A"
+        }
+      ],
+      "options": {"colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "id": 2,
+      "title": "Target replicas (autoscaler)",
+      "type": "stat",
+      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "max(ray_serve_autoscaling_target_replicas{application=\"$app\"})",
+          "legendFormat": "target",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Total Ray actors (alive)",
+      "type": "stat",
+      "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(ray_actors{State=\"ALIVE\"})",
+          "legendFormat": "alive",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Replica count over time",
+      "type": "timeseries",
+      "gridPos": {"x": 16, "y": 0, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(ray_serve_deployment_replica_healthy{application=\"$app\"}) by (deployment)",
+          "legendFormat": "{{deployment}} running",
+          "refId": "A"
+        },
+        {
+          "expr": "max(ray_serve_autoscaling_target_replicas{application=\"$app\"}) by (deployment)",
+          "legendFormat": "{{deployment}} target",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {"axisSoftMin": 1}
+        }
+      },
+      "description": "Running vs target. Gap during scale-up = pods being spawned."
+    },
+    {
+      "id": 6,
+      "title": "Ongoing requests (per deployment)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(ray_serve_num_ongoing_requests_at_replicas{application=\"$app\"}) by (deployment)",
+          "legendFormat": "{{deployment}} ongoing",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(ray_serve_deployment_queued_queries{application=\"$app\"}) by (deployment)",
+          "legendFormat": "{{deployment}} queued",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"lineWidth": 2}}},
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "description": "ongoing = in-progress inside actor. queued = proxy waiting for an actor slot. queued > 0 only under saturation — autoscaler looks at ongoing."
+    },
+    {
+      "id": 7,
+      "title": "vLLM concurrency (waiting / running)",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "vllm:num_requests_running",
+          "legendFormat": "running",
+          "refId": "A"
+        },
+        {
+          "expr": "vllm:num_requests_waiting",
+          "legendFormat": "waiting",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"lineWidth": 2}}},
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "description": "waiting > 0 = vLLM batch full (max_num_seqs=8 per pod). This is the real decode bottleneck, not Ray."
+    },
+    {
+      "id": 8,
+      "title": "Ray node CPU utilization (%)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "avg(ray_node_cpu_utilization) by (RayNodeType)",
+          "legendFormat": "{{RayNodeType}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}}
+    },
+    {
+      "id": 9,
+      "title": "Ray node memory used (GiB)",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(ray_node_mem_used) by (RayNodeType) / 1024 / 1024 / 1024",
+          "legendFormat": "{{RayNodeType}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "decgbytes", "decimals": 2}}
+    },
+    {
+      "id": 10,
+      "title": "Replica spawns (events)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 24, "w": 12, "h": 6},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(increase(ray_serve_replica_startup_latency_ms_count{application=\"$app\"}[5m])) by (deployment)",
+          "legendFormat": "{{deployment}} startups",
+          "refId": "A"
+        }
+      ],
+      "description": "Spikes = replica spawned. Frequent spikes during steady traffic = crashloop."
+    },
+    {
+      "id": 11,
+      "title": "Total router requests handled",
+      "type": "stat",
+      "gridPos": {"x": 12, "y": 24, "w": 12, "h": 6},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(ray_serve_num_router_requests_total)",
+          "legendFormat": "total",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    }
+  ]
+}

@@ -1,26 +1,25 @@
 /**
- * STRESS — Ramp up to saturate vLLM batch, then push past QA_INFLIGHT
+ * STRESS — Ramp up to saturate the 2-GPU vLLM serving path
  *
- * Goal     : Find the point where the system starts shedding load.
+ * Goal     : Find the point where latency bends under queued decode.
  *            Current architecture has RagApi autoscale 1→2 and 2 vLLM GPU
  *            replicas, so this measures the scale-out ceiling.
  *
  *   - vLLM batch capacity: 2 pods × max_num_seqs 8 = 16
- *   - RagApi semaphore   : QA_INFLIGHT = 16  (returns 429 on overflow)
+ *   - Ray Serve RagApi   : 2 replicas × max_ongoing_requests 8 = 16 active
+ *   - Extra requests queue in Ray Serve/vLLM instead of immediately returning 429.
  *
  * Duration : ~15 minutes
- * VUs      : 1 → 8 → 16 → 20 → 0  (20 deliberately exceeds the 16 semaphore)
+ * VUs      : 1 → 8 → 16 → 20 → 0
  *
  * What to watch (Grafana RAG Pipeline):
  *   - "QA In-Flight Requests": climbs toward 16, holds.
  *   - "vLLM Queue Depth (waiting/running)": running≈8 per pod, waiting>0 once VUs > 16.
- *   - "QA Request Rate by Status": `fallback` line jumps (backpressure) at VU=20.
- *   - "QA Fallback Rate by Reason": backpressure spike.
- *   - Wall p95 climbs past 20s under batched decode pressure.
+ *   - Wall p95 climbs past 30s under batched decode pressure.
  *
  * Pass/fail framing:
- *   - Stress tolerates 429s (backpressure is the SLO; better to reject than queue
- *     forever). qa_error_rate excludes 429 by design (see assertQAAccept).
+ *   - Stress tolerates 429s if they appear, but this profile mainly proves
+ *     stable queueing under saturation.
  *   - System should NOT 5xx; that would be a real bug.
  */
 
@@ -36,7 +35,7 @@ export const options = {
         { duration: '2m',  target: 4 },    // warm — same as load test
         { duration: '2m',  target: 8 },    // half of vLLM batch — no queue yet
         { duration: '2m',  target: 16 },   // exactly fills vLLM batch
-        { duration: '5m',  target: 20 },   // 4 over semaphore → expect 429s
+        { duration: '5m',  target: 20 },   // above active serving slots → queueing
         { duration: '2m',  target: 0 },    // ramp down
         { duration: '2m',  target: 0 },    // observe recovery
       ],
@@ -45,9 +44,11 @@ export const options = {
   },
   thresholds: {
     // Looser ceiling — batched decode + queueing slows individual users.
-    qa_duration_ms:  ['p(95)<25000', 'p(99)<45000'],
+    qa_duration_ms:  ['p(95)<45000', 'p(99)<60000'],
+    qa_ttft_ms:      ['p(95)<10000'],
     qa_error_rate:   ['rate<0.05'],   // 5% true errors max (429 NOT counted)
-    http_req_failed: ['rate<0.05'],
+    // Do not threshold http_req_failed here: k6 counts expected 429
+    // backpressure as failed HTTP. qa_error_rate is the true failure signal.
   },
 };
 

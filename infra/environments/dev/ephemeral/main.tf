@@ -8,9 +8,9 @@
 #     retained on persistent volumes; PV manifests here re-bind to them on
 #     next apply.
 #
-# Cost when up: lab scale-out profile uses 2 x g4dn.xlarge ON_DEMAND + 1 small
-# head node + EKS control plane. This is intentionally above the single-GPU
-# cost-first profile so the demo can show real GPU horizontal scaling.
+# Cost when idle/up: 1 x g4dn.xlarge ON_DEMAND + 1 small head node + EKS
+# control plane. Cluster Autoscaler can add the second g4dn.xlarge up to the
+# 8 G-family vCPU quota when vllm-server-1 is Pending.
 ###############################################################################
 
 ###############################################################################

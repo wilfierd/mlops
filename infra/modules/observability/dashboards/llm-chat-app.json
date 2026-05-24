@@ -82,17 +82,23 @@
     },
     {
       "id": 4,
-      "title": "p99 /qa",
+      "title": "Total /qa requests",
       "type": "stat",
       "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}) by (le)) / 1000",
+          "expr": "sum(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/qa\"})",
           "refId": "A"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "s", "decimals": 2}}
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}},
+      "description": "Cumulative total requests since last pod restart."
     },
     {
       "id": 5,
@@ -178,33 +184,47 @@
     },
     {
       "id": 9,
-      "title": "Requests per replica (last 5m)",
-      "type": "barchart",
+      "title": "Request rate per deployment",
+      "type": "timeseries",
       "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(increase(ray_serve_deployment_request_counter_total{application=~\"$app\"}[30m])) by (replica)",
-          "legendFormat": "{{replica}}",
+          "expr": "sum(rate(ray_serve_deployment_request_counter_total{application=~\"$app\"}[5m])) by (deployment)",
+          "legendFormat": "{{deployment}}",
           "refId": "A"
         }
       ],
-      "description": "Hot replica? Even distribution? Check load balance across the 2 actors per pod."
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {"lineWidth": 2}
+        }
+      },
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "description": "Rate per deployment (RagApi / Embedder). Flat line = stable. Spike = burst. Drop = replica restart."
     },
     {
       "id": 10,
-      "title": "HTTP status code split",
+      "title": "QA Request Status (ok / fallback / error)",
       "type": "timeseries",
       "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\"}[30m])) by (status_code)",
-          "legendFormat": "{{status_code}}",
+          "expr": "sum(rate(ray_rag_qa_requests_total[5m])) by (status)",
+          "legendFormat": "{{status}}",
           "refId": "A"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "reqps"}}
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {"lineWidth": 2}
+        }
+      },
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "description": "ok = answered, fallback = backpressure/timeout/no_hits, error = 5xx bugs."
     },
     {
       "id": 11,
@@ -224,19 +244,26 @@
     },
     {
       "id": 12,
-      "title": "Ray Metrics Scrape Up",
-      "type": "stat",
+      "title": "QA Fallback by Reason",
+      "type": "timeseries",
       "gridPos": {"x": 12, "y": 20, "w": 12, "h": 7},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "max(up{namespace=\"llm-chat\", endpoint=\"metrics\"})",
-          "legendFormat": "scrape up",
+          "expr": "sum(increase(ray_rag_qa_fallback_total[$__range])) by (reason)",
+          "legendFormat": "{{reason}}",
           "refId": "A"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}},
-      "description": "1 means Prometheus can scrape Ray head metrics. This is more reliable than health route traffic, which may not pass through Ray Serve."
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "custom": {"lineWidth": 2}
+        }
+      },
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "description": "Total fallbacks in the selected time range. Empty = no fallbacks (healthy). backpressure = 429; llm_timeout = decode too slow; no_hits = retrieval miss."
     }
   ]
 }

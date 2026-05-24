@@ -31,6 +31,7 @@ SERVICE_PORT="${SERVICE_PORT:-8000}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:${LOCAL_PORT}}"
 OUT_DIR="${OUT_DIR:-reports/k6-${SUITE}-$(date +%Y%m%d-%H%M%S)}"
 PROM_SNAPSHOT="${PROM_SNAPSHOT:-0}"
+VLLM_PF_PIDS=()
 
 mkdir -p "${OUT_DIR}"
 
@@ -49,6 +50,11 @@ cleanup() {
   if [[ -n "${VLLM_PF_PID:-}" ]]; then
     kill "${VLLM_PF_PID}" >/dev/null 2>&1 || true
   fi
+  if ((${#VLLM_PF_PIDS[@]} > 0)); then
+    for pid in "${VLLM_PF_PIDS[@]}"; do
+      kill "${pid}" >/dev/null 2>&1 || true
+    done
+  fi
 }
 trap cleanup EXIT
 
@@ -64,8 +70,27 @@ trap cleanup EXIT
 } | tee "${OUT_DIR}/summary.txt"
 
 kubectl config current-context > "${OUT_DIR}/kube-context.txt"
-kubectl -n "${NAMESPACE}" get rayservice,statefulset,pods,svc -o wide > "${OUT_DIR}/before-objects.txt"
+{
+  kubectl -n "${NAMESPACE}" get rayservice -o wide
+  echo
+  kubectl -n "${NAMESPACE}" get statefulset -o wide
+  echo
+  kubectl -n "${NAMESPACE}" get pods -o wide
+  echo
+  kubectl -n "${NAMESPACE}" get svc -o wide
+} > "${OUT_DIR}/before-objects.txt" 2>&1 || true
+kubectl get nodes -L node-type,nvidia.com/gpu -o wide > "${OUT_DIR}/before-nodes.txt"
+kubectl -n "${NAMESPACE}" get pvc -o wide > "${OUT_DIR}/before-pvc.txt" 2>&1 || true
+kubectl -n kube-system get pods -l app.kubernetes.io/name=aws-cluster-autoscaler -o wide \
+  > "${OUT_DIR}/before-cluster-autoscaler.txt" 2>&1 || true
 kubectl -n "${NAMESPACE}" top pods > "${OUT_DIR}/before-top-pods.txt" 2>&1 || true
+
+HEAD_POD_BEFORE="$(kubectl -n "${NAMESPACE}" get pod -l ray.io/node-type=head \
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+if [[ -n "${HEAD_POD_BEFORE}" ]]; then
+  kubectl -n "${NAMESPACE}" exec -c ray-head "${HEAD_POD_BEFORE}" -- serve status \
+    > "${OUT_DIR}/serve-status-before.txt" 2>&1 || true
+fi
 
 # Start port-forward in background
 kubectl -n "${NAMESPACE}" port-forward "svc/${SERVICE}" "${LOCAL_PORT}:${SERVICE_PORT}" \
@@ -89,11 +114,16 @@ fi
 
 # Optional: snapshot vLLM + Ray Prometheus metrics before/after the run
 if [[ "${PROM_SNAPSHOT}" == "1" ]]; then
-  kubectl -n "${NAMESPACE}" port-forward svc/vllm-server 18000:8000 \
-    > "${OUT_DIR}/vllm-pf.log" 2>&1 &
-  VLLM_PF_PID="$!"
-  sleep 2
-  curl -fsS http://127.0.0.1:18000/metrics > "${OUT_DIR}/vllm-metrics-before.txt" 2>/dev/null || true
+  i=0
+  for pod in $(kubectl -n "${NAMESPACE}" get pod -l app.kubernetes.io/name=vllm-server -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+    port=$((18000 + i))
+    kubectl -n "${NAMESPACE}" port-forward "pod/${pod}" "${port}:8000" \
+      > "${OUT_DIR}/vllm-pf-${pod}.log" 2>&1 &
+    VLLM_PF_PIDS+=("$!")
+    sleep 2
+    curl -fsS "http://127.0.0.1:${port}/metrics" > "${OUT_DIR}/vllm-metrics-before-${pod}.txt" 2>/dev/null || true
+    i=$((i + 1))
+  done
 fi
 
 # Run k6, capture stdout + JSON summary
@@ -106,7 +136,19 @@ K6_STATUS="${PIPESTATUS[0]}"
 set -e
 
 # Capture cluster state after the run
-kubectl -n "${NAMESPACE}" get rayservice,statefulset,pods,svc -o wide > "${OUT_DIR}/after-objects.txt"
+{
+  kubectl -n "${NAMESPACE}" get rayservice -o wide
+  echo
+  kubectl -n "${NAMESPACE}" get statefulset -o wide
+  echo
+  kubectl -n "${NAMESPACE}" get pods -o wide
+  echo
+  kubectl -n "${NAMESPACE}" get svc -o wide
+} > "${OUT_DIR}/after-objects.txt" 2>&1 || true
+kubectl get nodes -L node-type,nvidia.com/gpu -o wide > "${OUT_DIR}/after-nodes.txt"
+kubectl -n "${NAMESPACE}" get pvc -o wide > "${OUT_DIR}/after-pvc.txt" 2>&1 || true
+kubectl -n kube-system logs deploy/cluster-autoscaler-aws-cluster-autoscaler --tail=300 \
+  > "${OUT_DIR}/cluster-autoscaler.log" 2>&1 || true
 kubectl -n "${NAMESPACE}" top pods > "${OUT_DIR}/after-top-pods.txt" 2>&1 || true
 kubectl -n "${NAMESPACE}" get events --sort-by='.lastTimestamp' \
   > "${OUT_DIR}/events.txt" 2>&1 || true
@@ -120,7 +162,12 @@ if [[ -n "${HEAD_POD}" ]]; then
 fi
 
 if [[ "${PROM_SNAPSHOT}" == "1" ]]; then
-  curl -fsS http://127.0.0.1:18000/metrics > "${OUT_DIR}/vllm-metrics-after.txt" 2>/dev/null || true
+  i=0
+  for pod in $(kubectl -n "${NAMESPACE}" get pod -l app.kubernetes.io/name=vllm-server -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+    port=$((18000 + i))
+    curl -fsS "http://127.0.0.1:${port}/metrics" > "${OUT_DIR}/vllm-metrics-after-${pod}.txt" 2>/dev/null || true
+    i=$((i + 1))
+  done
 fi
 
 {
@@ -134,6 +181,9 @@ fi
   echo
   echo "Pods/RayService after run:"
   cat "${OUT_DIR}/after-objects.txt"
+  echo
+  echo "Nodes after run:"
+  cat "${OUT_DIR}/after-nodes.txt"
 } | tee -a "${OUT_DIR}/summary.txt"
 
 echo

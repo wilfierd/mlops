@@ -94,8 +94,15 @@ spec:
                 # P6 — QA
                 - name: VLLM_BASE_URL
                   value: http://vllm-server-0.vllm-server.llm-chat.svc.cluster.local:8000/v1
+                - name: VLLM_MAX_MODEL_LEN
+                  value: "8192"
                 - name: QA_MAX_TOKENS
                   value: "160"
+                # Drives "model" field in /qa structured logs. Update when
+                # swapping underlying weights (e.g. 3b → 7b) so dashboards
+                # and log queries can compare across switches.
+                - name: MODEL_LABEL
+                  value: "qwen2.5-3b-awq"
               resources:
                 requests:
                   cpu: "900m"

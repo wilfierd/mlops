@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import time
+import uuid
 from typing import Any, Literal
 
 import boto3
@@ -13,7 +15,7 @@ import numpy as np
 import tiktoken
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from openai import AsyncOpenAI
@@ -55,6 +57,26 @@ VLLM_MAX_MODEL_LEN = int(os.environ.get("VLLM_MAX_MODEL_LEN", "4096"))
 QA_MAX_TOKENS = int(os.environ.get("QA_MAX_TOKENS", "160"))
 QA_INFLIGHT = asyncio.Semaphore(16)
 _TIMEOUTS: dict[str, float] = {"embed": 2.0, "qdrant": 2.0, "vllm": 60.0}
+
+# vLLM "served-model-name" used for /v1/chat/completions addressing.
+VLLM_SERVED_MODEL = os.environ.get("VLLM_SERVED_MODEL", "qwen-rag")
+# Human-readable model label for structured logs / dashboards. Update when
+# swapping the underlying weights (e.g., "qwen2.5-7b-awq" → "qwen2.5-3b-awq").
+MODEL_LABEL = os.environ.get("MODEL_LABEL", "qwen2.5-3b-awq")
+
+_qa_logger = logging.getLogger("rag.qa")
+# Force INFO on this logger — Ray/uvicorn may default root to WARNING which
+# would silently drop /qa structured logs. propagate=True so Ray's stdout
+# handler still picks it up; we don't attach our own handler to avoid dupes.
+_qa_logger.setLevel(os.environ.get("QA_LOG_LEVEL", "INFO").upper())
+
+
+def _emit_qa_log(payload: dict[str, Any]) -> None:
+    """Emit one-line JSON log for /qa. Never raise from logging."""
+    try:
+        _qa_logger.info(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+    except Exception:
+        pass
 
 _RAG_SYSTEM = (
     "Bạn là trợ lý tài liệu. Trả lời câu hỏi của user dựa CHỈ trên CONTEXT cho trước.\n"
@@ -460,9 +482,14 @@ class RagApi:
     # ── QA: POST /qa ─────────────────────────────────────────────────────────
 
     @api.post("/qa", response_model=QAResponse)
-    async def query(self, request: QARequest) -> QAResponse:
+    async def query(self, request: QARequest, http_request: Request) -> QAResponse:
         if not S3_BUCKET:
             raise HTTPException(status_code=503, detail="S3_BUCKET not configured")
+
+        # Propagate X-Request-Id if client sent it; else generate UUID4 hex.
+        # Note: UUID4 is random, not time-sortable — pair with timestamp in
+        # log analysis if ordering matters.
+        request_id = http_request.headers.get("x-request-id") or uuid.uuid4().hex
 
         # [0] Backpressure — non-blocking acquire with 100ms grace
         try:
@@ -470,6 +497,13 @@ class RagApi:
         except asyncio.TimeoutError:
             self._m.qa_fallbacks.inc(tags={"reason": "backpressure"})
             self._m.qa_requests.inc(tags={"status": "fallback"})
+            _emit_qa_log({
+                "event": "qa_request",
+                "request_id": request_id,
+                "model": MODEL_LABEL,
+                "status": "fallback",
+                "fallback_reason": "backpressure",
+            })
             raise HTTPException(
                 status_code=429,
                 detail={"error": "busy_try_again", "fallback_reason": "backpressure"},
@@ -480,6 +514,18 @@ class RagApi:
         self._m.record_qa_start()
         _fallback_reason: str | None = None
         _is_error = False
+
+        # Observability captures (default-safe so finally always has values)
+        q_tok = 0
+        hits_raw_count = 0
+        hits_selected: list[Any] = []
+        top_score: float | None = None
+        context_tokens = 0
+        prompt_tokens_used = 0
+        completion_tokens_used = 0
+        ttft_ms: float | None = None
+        answer = ""
+
         try:
             # [1] Validate question
             q = request.question.strip()
@@ -546,10 +592,14 @@ class RagApi:
                 raise HTTPException(status_code=503, detail="qdrant unavailable")
             latency["qdrant"] = round((time.monotonic() - t0) * 1000, 1)
             self._m.record_step("qdrant", latency["qdrant"])
+            hits_raw_count = len(hits_raw)
+            if hits_raw:
+                top_score = float(hits_raw[0].score)
 
             # [5] No relevant hits (all below score_threshold or collection empty)
             if not hits_raw:
                 _fallback_reason = "no_hits"
+                self._m.record_retrieval(top_score, 0, 0)
                 return QAResponse(
                     answer="Tôi không tìm thấy thông tin trong tài liệu.",
                     sources=[],
@@ -562,6 +612,8 @@ class RagApi:
             hits = _mmr_rerank(query_vec, hits_raw, k=request.top_k, lambda_=0.5)
             latency["mmr"] = round((time.monotonic() - t0) * 1000, 1)
             self._m.record_step("mmr", latency["mmr"])
+            hits_selected = hits
+            self._m.record_retrieval(top_score, hits_raw_count, len(hits))
 
             # [7] Build context with source attribution headers
             context_parts = [
@@ -573,26 +625,43 @@ class RagApi:
 
             # [8] Trim to dynamic budget: max_model_len − system − question − output − margin
             context = _trim_to_budget(context, _context_budget(q_tok))
+            context_tokens = _count_tokens(context)
             prompt = _RAG_PROMPT_TEMPLATE.format(context=context, question=q)
 
-            # [9] Call vLLM (OpenAI-compatible endpoint)
+            # [9] Call vLLM (OpenAI-compatible endpoint, streaming for TTFT split)
             t0 = time.monotonic()
-            try:
-                resp = await asyncio.wait_for(
-                    self._vllm.chat.completions.create(
-                        model="qwen-rag",
-                        messages=[
-                            {"role": "system", "content": _RAG_SYSTEM},
-                            {"role": "user", "content": prompt},
-                        ],
-                        temperature=0.2,
-                        top_p=0.85,
-                        max_tokens=QA_MAX_TOKENS,
-                        frequency_penalty=0.05,
-                        stop=["<|im_end|>", "<|endoftext|>", "\n\nCÂU HỎI:"],
-                    ),
-                    timeout=_TIMEOUTS["vllm"],
+            content_parts: list[str] = []
+
+            async def _consume_stream() -> None:
+                nonlocal ttft_ms, prompt_tokens_used, completion_tokens_used
+                stream = await self._vllm.chat.completions.create(
+                    model=VLLM_SERVED_MODEL,
+                    messages=[
+                        {"role": "system", "content": _RAG_SYSTEM},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.2,
+                    top_p=0.85,
+                    max_tokens=QA_MAX_TOKENS,
+                    frequency_penalty=0.05,
+                    stop=["<|im_end|>", "<|endoftext|>", "\n\nCÂU HỎI:"],
+                    stream=True,
+                    stream_options={"include_usage": True},
                 )
+                async for chunk in stream:
+                    if chunk.choices:
+                        text = getattr(chunk.choices[0].delta, "content", None)
+                        if text:
+                            if ttft_ms is None:
+                                ttft_ms = round((time.monotonic() - t0) * 1000, 1)
+                            content_parts.append(text)
+                    usage = getattr(chunk, "usage", None)
+                    if usage:
+                        prompt_tokens_used = usage.prompt_tokens
+                        completion_tokens_used = usage.completion_tokens
+
+            try:
+                await asyncio.wait_for(_consume_stream(), timeout=_TIMEOUTS["vllm"])
             except asyncio.TimeoutError:
                 _fallback_reason = "llm_timeout"
                 return QAResponse(
@@ -603,9 +672,21 @@ class RagApi:
                 raise HTTPException(status_code=503, detail="llm unavailable")
             latency["llm"] = round((time.monotonic() - t0) * 1000, 1)
             self._m.record_step("llm", latency["llm"])
+            # Record completion_tokens unconditionally — answer_chars=0 with
+            # completion_tokens>0 (or both 0) is itself diagnostic signal.
+            self._m.record_completion_tokens(completion_tokens_used)
+            if ttft_ms is not None:
+                latency["ttft"] = ttft_ms
+                latency["decode"] = round(latency["llm"] - ttft_ms, 1)
+                self._m.record_ttft(ttft_ms)
             latency["total"] = round((time.monotonic() - t_start) * 1000, 1)
 
-            answer = resp.choices[0].message.content or ""
+            answer = "".join(content_parts)
+            # Empty answer despite successful stream → treat as fallback so
+            # status=ok doesn't mask a degraded response.
+            if not answer.strip():
+                _fallback_reason = "empty_answer"
+                self._m.qa_fallbacks.inc(tags={"reason": "empty_answer"})
             sources = [
                 SourceRef(
                     doc_id=h.payload.get("doc_id", ""),
@@ -628,6 +709,34 @@ class RagApi:
             QA_INFLIGHT.release()
             total_ms = round((time.monotonic() - t_start) * 1000, 1)
             self._m.record_qa_end(total_ms, _fallback_reason, error=_is_error)
+
+            # Structured QA log (one JSON line → stdout → kubectl logs / future scraper)
+            if _is_error:
+                _status = "error"
+            elif _fallback_reason:
+                _status = "fallback"
+            else:
+                _status = "ok"
+            _latency_log = dict(latency)
+            _latency_log["total"] = total_ms
+            _emit_qa_log({
+                "event": "qa_request",
+                "request_id": request_id,
+                "model": MODEL_LABEL,
+                "status": _status,
+                "fallback_reason": _fallback_reason,
+                "question_tokens": q_tok,
+                "top_k": request.top_k,
+                "score_threshold": request.score_threshold,
+                "hits_raw_count": hits_raw_count,
+                "selected_scores": [round(float(h.score), 4) for h in hits_selected[:5]],
+                "selected_chunks": [int(h.payload.get("chunk_idx", 0)) for h in hits_selected[:5]],
+                "context_tokens": context_tokens,
+                "prompt_tokens": prompt_tokens_used,
+                "completion_tokens": completion_tokens_used,
+                "answer_chars": len(answer),
+                "latency_ms": _latency_log,
+            })
 
 
 rag_app = RagApi.bind(Embedder.bind())  # type: ignore[attr-defined]

@@ -33,17 +33,17 @@
       "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(rag_qa_latency_ms_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_qa_latency_ms_bucket[5m])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(rag_qa_latency_ms_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_latency_ms_bucket[5m])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(rag_qa_latency_ms_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(ray_rag_qa_latency_ms_bucket[5m])) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -64,7 +64,7 @@
       "id": 2,
       "targets": [
         {
-          "expr": "sum(rate(rag_qa_requests_total[5m])) by (status)",
+          "expr": "sum(rate(ray_rag_qa_requests_total[5m])) by (status)",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
@@ -85,7 +85,7 @@
       "id": 3,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(rag_qa_step_latency_ms_bucket[5m])) by (le, step))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_step_latency_ms_bucket[5m])) by (le, step))",
           "legendFormat": "p95 {{step}}",
           "refId": "A"
         }
@@ -106,7 +106,7 @@
       "id": 4,
       "targets": [
         {
-          "expr": "sum(rate(rag_qa_fallback_total[5m])) by (reason)",
+          "expr": "sum(rate(ray_rag_qa_fallback_total[5m])) by (reason)",
           "legendFormat": "{{reason}}",
           "refId": "A"
         }
@@ -130,7 +130,7 @@
       },
       "targets": [
         {
-          "expr": "rag_qa_inflight",
+          "expr": "ray_rag_qa_inflight",
           "legendFormat": "in-flight",
           "refId": "A"
         }
@@ -158,7 +158,7 @@
       "id": 6,
       "targets": [
         {
-          "expr": "sum(rate(rag_ingest_docs_total[5m])) by (result)",
+          "expr": "sum(rate(ray_rag_ingest_docs_total[5m])) by (result)",
           "legendFormat": "{{result}}",
           "refId": "A"
         }
@@ -179,7 +179,7 @@
       "id": 7,
       "targets": [
         {
-          "expr": "sum(rate(rag_ingest_chunks_total[5m]))",
+          "expr": "sum(rate(ray_rag_ingest_chunks_total[5m]))",
           "legendFormat": "chunks/s",
           "refId": "A"
         }
@@ -266,7 +266,7 @@
       "id": 10,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(qdrant_collection_search_duration_seconds_bucket[5m])) by (le)) * 1000",
+          "expr": "histogram_quantile(0.95, sum(rate(rest_responses_duration_seconds_bucket{exported_endpoint=\"/collections/{name}/points/query\"}[5m])) by (le)) * 1000",
           "legendFormat": "p95 search ms",
           "refId": "A"
         }
@@ -287,17 +287,130 @@
       "id": 11,
       "targets": [
         {
-          "expr": "qdrant_collections_total_count",
+          "expr": "collections_total",
           "legendFormat": "collections",
           "refId": "A"
         },
         {
-          "expr": "sum(qdrant_points_count) by (collection_name)",
-          "legendFormat": "points {{collection_name}}",
+          "expr": "collections_vector_total",
+          "legendFormat": "vectors",
           "refId": "B"
         }
       ],
       "title": "Qdrant Collection Points",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 48 },
+      "id": 104,
+      "title": "QA Generation & Retrieval Quality",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "ms"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 49 },
+      "id": 12,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_qa_ttft_ms_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_ttft_ms_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "vLLM Time To First Token (ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 49 },
+      "id": 13,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_qa_completion_tokens_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_completion_tokens_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "Completion Tokens per /qa",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "short",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 57 },
+      "id": 14,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_retrieval_top_score_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_retrieval_top_score_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "Retrieval Top Hit Score (Qdrant cosine, post-threshold)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 57 },
+      "id": 15,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_retrieval_hits_raw_bucket[5m])) by (le))",
+          "legendFormat": "raw p50 (pre-MMR)",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_retrieval_hits_selected_bucket[5m])) by (le))",
+          "legendFormat": "selected p50 (post-MMR)",
+          "refId": "B"
+        }
+      ],
+      "title": "Retrieval Hits: Raw vs Selected",
       "type": "timeseries"
     }
   ],

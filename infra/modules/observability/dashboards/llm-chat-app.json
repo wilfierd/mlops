@@ -18,7 +18,7 @@
         "query": "label_values(ray_serve_num_router_requests_total{application!=\"\"}, application)",
         "refresh": 1,
         "sort": 1,
-        "current": {"text": "llm-chat-dev", "value": "llm-chat-dev"},
+        "current": {"text": "llm-chat", "value": "llm-chat"},
         "includeAll": false,
         "multi": false
       }
@@ -27,13 +27,13 @@
   "panels": [
     {
       "id": 1,
-      "title": "RPS — /chat",
+      "title": "RPS — /qa",
       "type": "stat",
       "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/chat\"}[1m]))",
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/qa\"}[1m]))",
           "refId": "A"
         }
       ],
@@ -41,13 +41,13 @@
     },
     {
       "id": 2,
-      "title": "p50 /chat",
+      "title": "p50 /qa",
       "type": "stat",
       "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/chat\"}[5m])) by (le)) / 1000",
+          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[5m])) by (le)) / 1000",
           "refId": "A"
         }
       ],
@@ -55,13 +55,13 @@
     },
     {
       "id": 3,
-      "title": "p95 /chat",
+      "title": "p95 /qa",
       "type": "stat",
       "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/chat\"}[5m])) by (le)) / 1000",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[5m])) by (le)) / 1000",
           "refId": "A"
         }
       ],
@@ -82,13 +82,13 @@
     },
     {
       "id": 4,
-      "title": "p99 /chat",
+      "title": "p99 /qa",
       "type": "stat",
       "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/chat\"}[5m])) by (le)) / 1000",
+          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[5m])) by (le)) / 1000",
           "refId": "A"
         }
       ],
@@ -102,7 +102,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "100 * sum(rate(ray_serve_num_http_error_requests_total{application=~\"$app\", route=\"/chat\"}[5m])) / clamp_min(sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/chat\"}[5m])), 1)",
+          "expr": "100 * sum(rate(ray_serve_num_http_error_requests_total{application=~\"$app\", route=\"/qa\"}[5m])) / clamp_min(sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/qa\"}[5m])), 1)",
           "refId": "A"
         }
       ],
@@ -123,18 +123,18 @@
     },
     {
       "id": 6,
-      "title": "Token throughput (≈ RPS × 64)",
+      "title": "vLLM generation tokens/s",
       "type": "stat",
       "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "64 * sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/chat\"}[1m]))",
+          "expr": "sum(rate(vllm:generation_tokens_total[1m]))",
           "refId": "A"
         }
       ],
       "fieldConfig": {"defaults": {"unit": "short", "decimals": 1}},
-      "description": "Upper bound assuming each request generates max_new_tokens. Replace with custom app counter for true tokens/sec."
+      "description": "Actual generation token throughput from the vLLM server."
     },
     {
       "id": 7,
@@ -153,23 +153,23 @@
     },
     {
       "id": 8,
-      "title": "Latency p50 / p95 / p99 — /chat",
+      "title": "Latency p50 / p95 / p99 — /qa",
       "type": "timeseries",
       "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/chat\"}[2m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[2m])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/chat\"}[2m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[2m])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/chat\"}[2m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[2m])) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -230,7 +230,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=~\"/health|/-/healthz\"}[1m]))",
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=~\"/healthz|/api/healthz|/-/healthz\"}[1m]))",
           "legendFormat": "health rps",
           "refId": "A"
         }

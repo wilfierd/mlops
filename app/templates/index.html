@@ -480,7 +480,13 @@ function ragApp() {
         const r = await fetch('/qa', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ question: q, top_k: 5, score_threshold: 0.5 }),
+          body: JSON.stringify({
+            question: q,
+            top_k: 3,
+            score_threshold: 0.5,
+            include_source_text: true,
+            source_text_chars: 360,
+          }),
         });
         const data = await r.json();
         if (!r.ok) {

@@ -66,12 +66,13 @@ def ask_qa(
     base_url: str,
     question: str,
     doc_ids: list[str],
+    top_k: int,
     score_threshold: float = 0.5,
 ) -> tuple[dict, float]:
     t0 = time.monotonic()
     r = client.post(
         f"{base_url}/qa",
-        json={"question": question, "doc_ids": doc_ids, "top_k": 5, "score_threshold": score_threshold},
+        json={"question": question, "doc_ids": doc_ids, "top_k": top_k, "score_threshold": score_threshold},
         timeout=90,
     )
     wall_ms = (time.monotonic() - t0) * 1000
@@ -95,6 +96,7 @@ def main() -> int:
     parser.add_argument("--min-pass-rate", type=float, default=0.7, help="Fail exit if pass rate below this")
     parser.add_argument("--skip-upload", action="store_true", help="Skip doc upload (docs already indexed)")
     parser.add_argument("--output-json", default="", help="Optional path to write full results JSON")
+    parser.add_argument("--top-k", type=int, default=3, help="Number of reranked chunks to pass to /qa")
     args = parser.parse_args()
 
     seed_dir = Path(args.seed_dir)
@@ -104,6 +106,7 @@ def main() -> int:
 
     # ── Step 1: Upload seed docs ─────────────────────────────────────────────
     doc_ids: list[str] = []
+    doc_ids_by_source: dict[str, str] = {}
     if not args.skip_upload:
         print("\n=== Uploading seed documents ===")
         seed_files = sorted(seed_dir.glob("*.md")) + sorted(seed_dir.glob("*.txt"))
@@ -113,6 +116,7 @@ def main() -> int:
         for p in seed_files:
             did = upload_doc(client, args.base_url, p)
             doc_ids.append(did)
+            doc_ids_by_source[p.name] = did
 
         # ── Step 2: Poll until all docs are ready ────────────────────────────
         print("\n=== Waiting for ingest to complete ===")
@@ -121,12 +125,33 @@ def main() -> int:
         print("=== Skipping upload (--skip-upload) ===")
         r = client.get(f"{args.base_url}/documents", timeout=15)
         r.raise_for_status()
-        doc_ids = [d["doc_id"] for d in r.json() if d.get("status") == "ready"]
+        ready_docs = [d for d in r.json() if d.get("status") == "ready"]
+        doc_ids = [d["doc_id"] for d in ready_docs]
+        doc_ids_by_source = {
+            d["filename"]: d["doc_id"]
+            for d in ready_docs
+            if d.get("filename") and d.get("doc_id")
+        }
         print(f"  found {len(doc_ids)} ready docs")
+        for filename, did in sorted(doc_ids_by_source.items()):
+            print(f"  ready {filename} → {did}")
 
     # ── Step 3: Run eval questions ────────────────────────────────────────────
     print(f"\n=== Running eval from {eval_file} ===")
     questions = [json.loads(line) for line in eval_file.read_text().splitlines() if line.strip()]
+    missing_sources = sorted({
+        q["doc_source"]
+        for q in questions
+        if q.get("doc_source") and q["doc_source"] not in doc_ids_by_source
+    })
+    if missing_sources:
+        print(
+            "ERROR: eval references docs that are not ready: "
+            + ", ".join(missing_sources),
+            file=sys.stderr,
+        )
+        print("Run without --skip-upload or upload those seed docs first.", file=sys.stderr)
+        return 1
 
     results = []
     wall_times: list[float] = []
@@ -136,10 +161,19 @@ def main() -> int:
         qid = q["id"]
         question = q["question"]
         keywords = q.get("expected_keywords", [])
+        source = q.get("doc_source")
+        scoped_doc_ids = [doc_ids_by_source[source]] if source else doc_ids
 
         score_threshold = q.get("score_threshold", 0.5)
         try:
-            resp, wall_ms = ask_qa(client, args.base_url, question, doc_ids, score_threshold)
+            resp, wall_ms = ask_qa(
+                client,
+                args.base_url,
+                question,
+                scoped_doc_ids,
+                args.top_k,
+                score_threshold,
+            )
         except Exception as exc:
             print(f"  [{qid}] ERROR: {exc}")
             results.append({"id": qid, "pass": False, "error": str(exc)})

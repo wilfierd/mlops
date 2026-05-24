@@ -124,11 +124,12 @@ vllm-down: ## delete vllm-openai (keeps llm-cache PVC + EBS data)
 vllm-logs: ## tail vllm-server logs
 	kubectl -n $(NS) logs -f vllm-server-0
 
-vllm-pf: ## port-forward 8000:8000 to vllm-server (blocking)
-	kubectl -n $(NS) port-forward svc/vllm-server 8000:8000
+vllm-pf: ## port-forward 8001:8000 to vllm-server (blocking; keeps 8000 free for RAG)
+	kubectl -n $(NS) port-forward svc/vllm-server 8001:8000
 
-vllm-bench: ## run scripts/bench_vllm.py against localhost:8000 (port-forward first)
+vllm-bench: ## run scripts/bench_vllm.py against localhost:8001 (port-forward first)
 	python3 ../scripts/bench_vllm.py \
+		--base-url http://localhost:8001 \
 		--concurrency 1,4 \
 		--requests 10 \
 		--prompt-tokens 3000 \

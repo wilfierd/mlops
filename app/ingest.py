@@ -103,7 +103,16 @@ def meta_write(s3, bucket: str, doc_id: str, patch: dict[str, Any]) -> None:
     )
 
 
-def detect_mime(data: bytes) -> str | None:
+def detect_mime(data: bytes, filename: str | None = None) -> str | None:
+    if filename:
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext in ("md", "txt"):
+            try:
+                data[:8192].decode("utf-8")
+                return EXT_TO_MIME[ext]
+            except UnicodeDecodeError:
+                pass
+
     kind = filetype.guess(data[:512])
     if kind:
         return kind.mime

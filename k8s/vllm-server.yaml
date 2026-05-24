@@ -2,8 +2,8 @@
 #
 # Image:   official vllm/vllm-openai pinned to v0.11.0.
 # GPU:     g4dn.xlarge (T4 16 GB, Turing — NO FP8 KV).
-# Args:    --quantization=awq --kv-cache-dtype=auto --max-model-len=4096
-#          --max-num-seqs=4 (T4-safe; see doc §3.5.4)
+# Args:    --quantization=awq --kv-cache-dtype=auto --max-model-len=8192
+#          --max-num-seqs=16 (3B T4 profile; lower to 8 if preemptions/OOM)
 # Storage: HF_HOME mounted to llm-cache PVC (provisioned by ephemeral stack)
 #          so the model survives cluster destroy/recreate.
 #
@@ -61,21 +61,24 @@ spec:
         - name: vllm
           image: vllm/vllm-openai:v0.11.0
           imagePullPolicy: IfNotPresent
-          # Cost-first T4 profile. To switch to stable g6/g5 profile, change:
+          # Cost-first T4 profile. 3B AWQ keeps answer quality acceptable for
+          # grounded RAG while freeing VRAM for more concurrent sequences.
+          # To switch to stable g6/g5 profile, change:
           #   --quantization=awq_marlin
           #   --kv-cache-dtype=fp8_e5m2
           #   --max-model-len=8192
           #   --max-num-seqs=16
           args:
-            - "--model=Qwen/Qwen2.5-7B-Instruct-AWQ"
+            - "--model=Qwen/Qwen2.5-3B-Instruct-AWQ"
             - "--quantization=awq"
             - "--dtype=float16"
             - "--kv-cache-dtype=auto"
-            - "--max-model-len=4096"
-            - "--max-num-seqs=4"
-            # 0.82 (not 0.85) for T4 — leaves ~2.9 GiB headroom for AWQ kernel
-            # warmup + CUDA workspace. Stable profile (A10G/L4) can use 0.85
-            # because larger VRAM absorbs the same absolute overhead.
+            - "--max-model-len=8192"
+            - "--max-num-seqs=16"
+            - "--enable-prefix-caching"
+            # 0.82 (not 0.85) for T4 — leaves headroom for AWQ kernel warmup,
+            # CUDA workspace, and prefix-cache/KV fragmentation. If stable,
+            # test 0.85 later; if preemptions/OOM, reduce max-num-seqs to 8.
             - "--gpu-memory-utilization=0.82"
             - "--swap-space=4"
             - "--served-model-name=qwen-rag"

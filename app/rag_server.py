@@ -52,18 +52,31 @@ VLLM_BASE_URL = os.environ.get(
     "http://vllm-server-0.vllm-server.llm-chat.svc.cluster.local:8000/v1",
 )
 VLLM_MAX_MODEL_LEN = int(os.environ.get("VLLM_MAX_MODEL_LEN", "4096"))
+QA_MAX_TOKENS = int(os.environ.get("QA_MAX_TOKENS", "160"))
 QA_INFLIGHT = asyncio.Semaphore(16)
 _TIMEOUTS: dict[str, float] = {"embed": 2.0, "qdrant": 2.0, "vllm": 60.0}
 
 _RAG_SYSTEM = (
-    "Bạn là trợ lý trả lời câu hỏi dựa trên các đoạn tài liệu cho trước.\n"
+    "Bạn là trợ lý tài liệu. Trả lời câu hỏi của user dựa CHỈ trên CONTEXT cho trước.\n"
     "Quy tắc bắt buộc:\n"
     "1. CHỈ trả lời dựa trên nội dung trong CONTEXT phía dưới.\n"
     "2. Nếu CONTEXT không đủ thông tin để trả lời chính xác, trả lời CHÍNH XÁC chuỗi: "
     '"Tôi không tìm thấy thông tin trong tài liệu."\n'
-    "3. Sau mỗi khẳng định, thêm tham chiếu dạng [Nguồn N] tương ứng với đoạn nguồn.\n"
-    "4. Trả lời ngắn gọn, không bịa số liệu, không suy diễn.\n"
-    "5. Trả lời bằng cùng ngôn ngữ với câu hỏi."
+    "3. Trả lời bằng cùng ngôn ngữ với câu hỏi.\n"
+    "4. Không bịa số liệu, không suy diễn ngoài tài liệu.\n"
+    "5. Luôn cite nguồn bằng dạng [Nguồn N] ở cuối ý hoặc cuối câu.\n"
+    "Format bắt buộc:\n"
+    "- Nếu hỏi 'là gì', 'dùng để làm gì', hoặc hỏi tính năng: mở đầu bằng 1 câu tổng quan, "
+    "sau đó trả lời 3-4 bullet.\n"
+    "- Mỗi bullet bắt đầu bằng '- ', nêu rõ ý nghĩa hoặc lợi ích thực tế; không chỉ liệt kê keyword.\n"
+    "- Nếu hỏi cách làm, quy trình, hoặc các bước: trả lời bằng numbered list.\n"
+    "- Nếu là yes/no hoặc factoid: trả lời 1 câu ngắn.\n"
+    "Ví dụ:\n"
+    "Q: Qdrant dùng để làm gì?\n"
+    "A: Qdrant được dùng làm vector database cho hệ thống RAG.\n"
+    "- Lưu trữ vector embedding để similarity search theo ngữ nghĩa. [Nguồn 1]\n"
+    "- Hỗ trợ filter metadata khi truy vấn để giới hạn kết quả theo tài liệu hoặc thuộc tính. [Nguồn 1]\n"
+    "- Có persistence trên disk để dữ liệu có thể recover sau restart. [Nguồn 2]"
 )
 _RAG_PROMPT_TEMPLATE = "CONTEXT:\n{context}\n\nCÂU HỎI: {question}\n\nTRẢ LỜI:"
 
@@ -98,8 +111,16 @@ def _context_budget(question_tokens: int) -> int:
     if _RAG_SYSTEM_TOKENS is None:
         _RAG_SYSTEM_TOKENS = _count_tokens(_RAG_SYSTEM)
     # 15 ≈ template scaffolding; 30 = safety margin for tokenizer edge cases
-    budget = VLLM_MAX_MODEL_LEN - _RAG_SYSTEM_TOKENS - question_tokens - 400 - 15 - 30
+    budget = VLLM_MAX_MODEL_LEN - _RAG_SYSTEM_TOKENS - question_tokens - QA_MAX_TOKENS - 15 - 30
     return max(budget, 500)
+
+
+def _truncate_source_text(text: str, max_chars: int) -> str:
+    if max_chars <= 0:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "..."
 
 
 def _mmr_rerank(
@@ -178,8 +199,10 @@ class DocStatus(BaseModel):
 class QARequest(BaseModel):
     question: str
     doc_ids: list[str] | None = None
-    top_k: int = Field(default=5, ge=1, le=10)
+    top_k: int = Field(default=3, ge=1, le=10)
     score_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    include_source_text: bool = False
+    source_text_chars: int = Field(default=360, ge=0, le=2000)
 
 
 class SourceRef(BaseModel):
@@ -297,7 +320,7 @@ class RagApi:
             raise HTTPException(status_code=413, detail="oversized_doc: file exceeds 50 MiB limit")
 
         # [1] Validate MIME via magic bytes
-        mime = detect_mime(data)
+        mime = detect_mime(data, file.filename)
         if not mime or mime not in ALLOWED_MIMES:
             raise HTTPException(
                 status_code=415,
@@ -564,7 +587,7 @@ class RagApi:
                         ],
                         temperature=0.2,
                         top_p=0.85,
-                        max_tokens=400,
+                        max_tokens=QA_MAX_TOKENS,
                         frequency_penalty=0.05,
                         stop=["<|im_end|>", "<|endoftext|>", "\n\nCÂU HỎI:"],
                     ),
@@ -589,7 +612,11 @@ class RagApi:
                     doc_title=h.payload.get("doc_title"),
                     chunk_idx=int(h.payload.get("chunk_idx", 0)),
                     score=round(h.score, 4),
-                    text=h.payload.get("text", ""),
+                    text=(
+                        _truncate_source_text(h.payload.get("text", ""), request.source_text_chars)
+                        if request.include_source_text
+                        else ""
+                    ),
                 )
                 for h in hits
             ]

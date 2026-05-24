@@ -12,7 +12,9 @@ _STEP_LATENCY_BUCKETS = [10, 50, 100, 500, 1_000, 2_000, 5_000, 15_000]
 _TTFT_BUCKETS = [50, 100, 200, 400, 800, 1_500, 3_000, 6_000]
 _COMPLETION_TOK_BUCKETS = [16, 32, 64, 96, 128, 160, 200, 256, 384, 512]
 _SCORE_BUCKETS = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-_HITS_BUCKETS = [0, 1, 3, 5, 8, 12, 16, 20]
+# Ray Histogram boundaries must be strictly positive. Observing 0 is still
+# valid and falls into the first bucket.
+_HITS_BUCKETS = [1, 3, 5, 8, 12, 16, 20]
 
 
 class RagMetrics:

@@ -1,23 +1,33 @@
 /**
- * SPIKE — Sudden traffic burst, measure cold-scale latency
+ * SPIKE — Step burst from idle to full batch, measure cold-batch latency
  *
- * Goal     : Hit the system with a sudden 8-VU burst (vs gradual ramp).
- *            Quantify the time from spike onset until replicas catch up.
+ * Goal     : Hit the system with a sudden 16-VU step (vs gradual ramp).
+ *            Quantify TTFT degradation when vLLM goes from idle → full batch
+ *            in one moment.
+ *
  * Duration : ~10 minutes
- * VUs      : 0 → 8 (immediate) → 8 (hold) → 0
+ * VUs      : 0 → 16 (step) → 16 (hold) → 0
  *
  * Differs from stress:
- *   - Stress = gradual ramp to find breaking point.
- *   - Spike  = step function: idle one moment, peak the next. Latency p99
- *              during the first 30-60s spike is the metric that matters.
+ *   - Stress = gradual ramp 1→20 to find shedding point.
+ *   - Spike  = step function: idle one moment, exactly-full the next.
+ *              We stop at 16 (not over) to isolate batch-warmup cost from
+ *              backpressure shedding.
  *
  * What you'll see:
- *   - For ~30s: huge queue, p99 latency ~5-30s as proxy waits for replica 3.
- *   - At ~3-5min mark: 2nd EC2 node Ready, replica 3-4 spawn, latency normalizes.
+ *   - First 5–10 s after spike: TTFT p99 spikes (vLLM rebuilds CUDA graph for
+ *     larger batch, KV cache repopulates). Wall p99 can hit 20–40s briefly.
+ *   - After ~30 s: batch settles, throughput stabilizes around bench numbers.
+ *   - No 429 expected — 16 VUs is exactly QA_INFLIGHT limit (off-by-one tolerance
+ *     in semaphore acquisition; brief race may cause ≤1% 429).
+ *
+ * Watch on Grafana:
+ *   - "vLLM TTFT": p95 spike at t≈30s, recovers by t≈60s.
+ *   - "vLLM Prefill vs Decode Time p95": prefill ratio drops as batch fills.
+ *   - "QA Per-Step p95 Latency": llm step is the only one that should move.
  */
 
-import { sleep } from 'k6';
-import { chat, assertChatOK, healthCheck, printSummary } from './helpers.js';
+import { qa, assertQAAccept, healthCheck, printSummary } from './helpers.js';
 
 export const options = {
   scenarios: {
@@ -25,19 +35,20 @@ export const options = {
       executor: 'ramping-vus',
       startVUs: 0,
       stages: [
-        { duration: '30s', target: 0 },   // idle baseline
-        { duration: '5s',  target: 8 },   // SPIKE
-        { duration: '6m',  target: 8 },   // hold so scale-up completes
-        { duration: '30s', target: 0 },   // drop
-        { duration: '2m',  target: 0 },   // observe replica downscale
+        { duration: '30s', target: 0 },    // idle baseline
+        { duration: '5s',  target: 16 },   // SPIKE to full vLLM batch
+        { duration: '6m',  target: 16 },   // hold so batch warmup completes
+        { duration: '30s', target: 0 },    // drop
+        { duration: '2m',  target: 0 },    // observe recovery
       ],
       gracefulStop: '1m',
     },
   },
   thresholds: {
-    chat_duration:   ['p(95)<30000', 'p(99)<60000'],
-    chat_error_rate: ['rate<0.15'],
-    http_req_failed: ['rate<0.15'],
+    // Wide ceiling for first 30s spike absorption; should settle after.
+    qa_duration_ms:  ['p(95)<40000', 'p(99)<60000'],
+    qa_error_rate:   ['rate<0.05'],
+    http_req_failed: ['rate<0.05'],
   },
 };
 
@@ -47,10 +58,10 @@ export function setup() {
 }
 
 export default function () {
-  const { res, answer } = chat({ maxNewTokens: 64, temperature: 0.2, timeoutSec: 90 });
-  assertChatOK(res, answer);
+  const { res } = qa({ timeoutSec: 90 });
+  assertQAAccept(res);
 }
 
 export function handleSummary(data) {
-  return { stdout: printSummary('SPIKE (0 → 8 VU step)', data) };
+  return { stdout: printSummary('SPIKE (0 → 16 VU step)', data) };
 }

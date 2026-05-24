@@ -53,6 +53,11 @@ VLLM_BASE_URL = os.environ.get(
     "VLLM_BASE_URL",
     "http://vllm-server-0.vllm-server.llm-chat.svc.cluster.local:8000/v1",
 )
+VLLM_BASE_URLS = [
+    u.strip()
+    for u in os.environ.get("VLLM_BASE_URLS", VLLM_BASE_URL).split(",")
+    if u.strip()
+]
 VLLM_MAX_MODEL_LEN = int(os.environ.get("VLLM_MAX_MODEL_LEN", "4096"))
 QA_MAX_TOKENS = int(os.environ.get("QA_MAX_TOKENS", "160"))
 QA_INFLIGHT = asyncio.Semaphore(16)
@@ -74,7 +79,9 @@ _qa_logger.setLevel(os.environ.get("QA_LOG_LEVEL", "INFO").upper())
 def _emit_qa_log(payload: dict[str, Any]) -> None:
     """Emit one-line JSON log for /qa. Never raise from logging."""
     try:
-        _qa_logger.info(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        print(line, flush=True)
+        _qa_logger.info(line)
     except Exception:
         pass
 
@@ -282,9 +289,18 @@ class RagApi:
     def __init__(self, embedder: DeploymentHandle) -> None:
         self.embedder = embedder
         self.s3 = boto3.client("s3")
-        self._vllm = AsyncOpenAI(base_url=VLLM_BASE_URL, api_key="not-needed")
+        self._vllm_clients = [
+            AsyncOpenAI(base_url=base_url, api_key="not-needed")
+            for base_url in VLLM_BASE_URLS
+        ]
+        self._vllm_rr = 0
         self._m = RagMetrics()
         self._reaper_bg = asyncio.get_event_loop().create_task(self._reaper_loop())
+
+    def _next_vllm(self) -> tuple[AsyncOpenAI, str]:
+        idx = self._vllm_rr % len(self._vllm_clients)
+        self._vllm_rr += 1
+        return self._vllm_clients[idx], VLLM_BASE_URLS[idx]
 
     async def _reaper_loop(self) -> None:
         while True:
@@ -524,6 +540,7 @@ class RagApi:
         prompt_tokens_used = 0
         completion_tokens_used = 0
         ttft_ms: float | None = None
+        vllm_endpoint = ""
         answer = ""
 
         try:
@@ -633,8 +650,9 @@ class RagApi:
             content_parts: list[str] = []
 
             async def _consume_stream() -> None:
-                nonlocal ttft_ms, prompt_tokens_used, completion_tokens_used
-                stream = await self._vllm.chat.completions.create(
+                nonlocal ttft_ms, prompt_tokens_used, completion_tokens_used, vllm_endpoint
+                vllm_client, vllm_endpoint = self._next_vllm()
+                stream = await vllm_client.chat.completions.create(
                     model=VLLM_SERVED_MODEL,
                     messages=[
                         {"role": "system", "content": _RAG_SYSTEM},
@@ -735,6 +753,7 @@ class RagApi:
                 "prompt_tokens": prompt_tokens_used,
                 "completion_tokens": completion_tokens_used,
                 "answer_chars": len(answer),
+                "vllm_endpoint": vllm_endpoint,
                 "latency_ms": _latency_log,
             })
 

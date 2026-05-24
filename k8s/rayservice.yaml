@@ -22,8 +22,14 @@ spec:
         route_prefix: /
         deployments:
           - name: RagApi
-            num_replicas: 1
-            max_ongoing_requests: 32
+            autoscaling_config:
+              min_replicas: 1
+              initial_replicas: 1
+              max_replicas: 2
+              target_ongoing_requests: 2
+              upscale_delay_s: 15
+              downscale_delay_s: 120
+            max_ongoing_requests: 8
             ray_actor_options:
               num_cpus: 0.2
           - name: Embedder
@@ -93,7 +99,12 @@ spec:
                   value: llm-chat
                 # P6 — QA
                 - name: VLLM_BASE_URL
-                  value: http://vllm-server-0.vllm-server.llm-chat.svc.cluster.local:8000/v1
+                  value: http://vllm-server.llm-chat.svc.cluster.local:8000/v1
+                # P10 — 2x GPU scale-out. App client round-robins these pod
+                # endpoints so one long-lived HTTP connection does not pin all
+                # traffic to a single Kubernetes Service backend.
+                - name: VLLM_BASE_URLS
+                  value: http://vllm-server-0.vllm-server-headless.llm-chat.svc.cluster.local:8000/v1,http://vllm-server-1.vllm-server-headless.llm-chat.svc.cluster.local:8000/v1
                 - name: VLLM_MAX_MODEL_LEN
                   value: "8192"
                 - name: QA_MAX_TOKENS

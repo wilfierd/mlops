@@ -118,13 +118,13 @@ variable "gpu_capacity_type" {
 
 variable "gpu_min_size" {
   type    = number
-  default = 0
+  default = 2
 }
 
 variable "gpu_desired_size" {
-  description = "1 GPU node up while cluster is up. Bump to 2 for vLLM scale-out."
+  description = "2 GPU nodes up for vLLM scale-out. 2 x g4dn.xlarge = 8 G-family vCPU quota."
   type        = number
-  default     = 1
+  default     = 2
 }
 
 variable "gpu_max_size" {

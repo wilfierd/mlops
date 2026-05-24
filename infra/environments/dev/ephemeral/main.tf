@@ -8,8 +8,9 @@
 #     retained on persistent volumes; PV manifests here re-bind to them on
 #     next apply.
 #
-# Cost when up: ~$0.55/h (EKS $0.10 + g6.xlarge spot $0.32 + m6i.xlarge spot
-# $0.06 + EBS root + misc). 80h/month ≈ $46/month.
+# Cost when up: lab scale-out profile uses 2 x g4dn.xlarge ON_DEMAND + 1 small
+# head node + EKS control plane. This is intentionally above the single-GPU
+# cost-first profile so the demo can show real GPU horizontal scaling.
 ###############################################################################
 
 ###############################################################################

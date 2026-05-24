@@ -1,16 +1,35 @@
-# vllm-openai server — cost-first T4 profile (rev 5).
+# vllm-openai server — 2x T4 scale-out profile (rev 6).
 #
 # Image:   official vllm/vllm-openai pinned to v0.11.0.
-# GPU:     g4dn.xlarge (T4 16 GB, Turing — NO FP8 KV).
+# GPU:     2 x g4dn.xlarge (T4 16 GB, Turing — NO FP8 KV).
 # Args:    --quantization=awq --kv-cache-dtype=auto --max-model-len=8192
-#          --max-num-seqs=16 (3B T4 profile; lower to 8 if preemptions/OOM)
-# Storage: HF_HOME mounted to llm-cache PVC (provisioned by ephemeral stack)
-#          so the model survives cluster destroy/recreate.
+#          --max-num-seqs=8 per pod (tail-latency friendly T4 profile).
+# Storage: one RWO model-cache PVC per StatefulSet pod via volumeClaimTemplates.
+#          This is required for replicas=2; one shared llm-cache-pvc cannot be
+#          mounted read-write by both GPU pods.
 #
 # Deploy after `make cluster-up`:
 #   kubectl apply -f k8s/vllm-server.yaml
 # First-time model download: ~5 GB AWQ over IGW → ~3–5 min.
-# Subsequent cluster-up: reads from EBS llm-cache → ~15 s model load.
+# First scale-out after this change downloads the model once per pod.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-server-headless
+  namespace: llm-chat
+  labels:
+    app.kubernetes.io/name: vllm-server
+spec:
+  # Headless service for stable StatefulSet pod DNS:
+  # vllm-server-0.vllm-server-headless.llm-chat.svc.cluster.local
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: vllm-server
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
 ---
 apiVersion: v1
 kind: Service
@@ -20,8 +39,8 @@ metadata:
   labels:
     app.kubernetes.io/name: vllm-server
 spec:
-  # Headless so pod DNS resolves: vllm-server-0.vllm-server.llm-chat.svc.cluster.local
-  clusterIP: None
+  # ClusterIP service for generic clients / port-forward. The RAG app uses
+  # explicit pod URLs in VLLM_BASE_URLS for deterministic client-side round-robin.
   selector:
     app.kubernetes.io/name: vllm-server
   ports:
@@ -37,8 +56,11 @@ metadata:
   labels:
     app.kubernetes.io/name: vllm-server
 spec:
-  serviceName: vllm-server
-  replicas: 1
+  serviceName: vllm-server-headless
+  replicas: 2
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
   selector:
     matchLabels:
       app.kubernetes.io/name: vllm-server
@@ -74,7 +96,7 @@ spec:
             - "--dtype=float16"
             - "--kv-cache-dtype=auto"
             - "--max-model-len=8192"
-            - "--max-num-seqs=16"
+            - "--max-num-seqs=8"
             - "--enable-prefix-caching"
             # 0.82 (not 0.85) for T4 — leaves headroom for AWQ kernel warmup,
             # CUDA workspace, and prefix-cache/KV fragmentation. If stable,
@@ -137,10 +159,17 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
       volumes:
-        - name: model-cache
-          persistentVolumeClaim:
-            claimName: llm-cache-pvc
         - name: dshm
           emptyDir:
             medium: Memory
             sizeLimit: 256Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: model-cache
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: gp3-retain
+        resources:
+          requests:
+            storage: 20Gi

@@ -110,10 +110,13 @@ roll: ## force-delete pods so the latest image is pulled
 
 VLLM_MANIFEST := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))/../k8s/vllm-server.yaml
 
-vllm-up: ## deploy vllm-openai StatefulSet + Service (cost-first T4 profile)
+vllm-up: ## deploy/recreate vllm-openai StatefulSet + Service (2x T4 scale-out profile)
+	@echo "==> Recreating vllm-server workload (needed for serviceName/PVC template changes)..."
+	-@kubectl -n $(NS) delete statefulset vllm-server --ignore-not-found
+	-@kubectl -n $(NS) delete svc vllm-server vllm-server-headless --ignore-not-found
 	kubectl apply -f "$(VLLM_MANIFEST)"
-	@echo "==> Waiting for vllm-server pod Ready (first model download ~3–5 min)..."
-	kubectl -n $(NS) wait --for=condition=Ready pod/vllm-server-0 --timeout=900s
+	@echo "==> Waiting for vllm-server pods Ready (first model download ~3–5 min per new pod)..."
+	kubectl -n $(NS) wait --for=condition=Ready pod -l app.kubernetes.io/name=vllm-server --timeout=1200s
 	@echo "==> Ready. Port-forward then bench:"
 	@echo "    make vllm-pf &     # 'make vllm-pf' blocks; & to background"
 	@echo "    make vllm-bench"
@@ -122,7 +125,7 @@ vllm-down: ## delete vllm-openai (keeps llm-cache PVC + EBS data)
 	kubectl delete -f "$(VLLM_MANIFEST)" --ignore-not-found
 
 vllm-logs: ## tail vllm-server logs
-	kubectl -n $(NS) logs -f vllm-server-0
+	kubectl -n $(NS) logs -f -l app.kubernetes.io/name=vllm-server --max-log-requests=2
 
 vllm-pf: ## port-forward 8001:8000 to vllm-server (blocking; keeps 8000 free for RAG)
 	kubectl -n $(NS) port-forward svc/vllm-server 8001:8000

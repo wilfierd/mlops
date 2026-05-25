@@ -6,7 +6,7 @@
   "tags": ["ray", "system"],
   "time": {"from": "now-30m", "to": "now"},
   "refresh": "10s",
-  "title": "Ray Cluster — Operations",
+  "title": "Ray / vLLM — Capacity",
   "uid": "ray-cluster-ops",
   "templating": {
     "list": [
@@ -125,13 +125,13 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "vllm:num_requests_running",
-          "legendFormat": "running",
+          "expr": "sum by (pod) (vllm:num_requests_running)",
+          "legendFormat": "{{pod}} running",
           "refId": "A"
         },
         {
-          "expr": "vllm:num_requests_waiting",
-          "legendFormat": "waiting",
+          "expr": "sum by (pod) (vllm:num_requests_waiting)",
+          "legendFormat": "{{pod}} waiting",
           "refId": "B"
         }
       ],
@@ -177,7 +177,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(increase(ray_serve_replica_startup_latency_ms_count{application=\"$app\"}[5m])) by (deployment)",
+          "expr": "sum(increase(ray_serve_replica_startup_latency_ms_count{application=\"$app\"}[$__rate_interval])) by (deployment)",
           "legendFormat": "{{deployment}} startups",
           "refId": "A"
         }

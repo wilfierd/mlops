@@ -6,7 +6,7 @@
   "tags": ["llm", "chat", "app"],
   "time": {"from": "now-30m", "to": "now"},
   "refresh": "5s",
-  "title": "LLM Chat — Application",
+  "title": "LLM Chat — SLO Overview",
   "uid": "llm-chat-app",
   "templating": {
     "list": [
@@ -33,7 +33,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/qa\"}[30m]))",
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/qa\"}[$__rate_interval]))",
           "refId": "A"
         }
       ],
@@ -47,7 +47,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}) by (le)) / 1000",
+          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[$__rate_interval])) by (le)) / 1000",
           "refId": "A"
         }
       ],
@@ -61,7 +61,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}) by (le)) / 1000",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[$__rate_interval])) by (le)) / 1000",
           "refId": "A"
         }
       ],
@@ -82,13 +82,13 @@
     },
     {
       "id": 4,
-      "title": "Total /qa requests",
+      "title": "TTFT p95",
       "type": "stat",
       "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/qa\"})",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_ttft_ms_bucket[$__rate_interval])) by (le))",
           "refId": "A"
         }
       ],
@@ -97,8 +97,8 @@
         "colorMode": "value",
         "graphMode": "none"
       },
-      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}},
-      "description": "Cumulative total requests since last pod restart."
+      "fieldConfig": {"defaults": {"unit": "ms", "decimals": 0}},
+      "description": "Time to first token observed by RagApi. This is the perceived-latency signal for streaming UX."
     },
     {
       "id": 5,
@@ -108,7 +108,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "100 * (sum(rate(ray_serve_num_http_error_requests_total{application=~\"$app\", route=\"/qa\"}[30m])) or vector(0)) / clamp_min((sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/qa\"}[30m])) or vector(0)), 1)",
+	          "expr": "100 * (sum(rate(ray_serve_num_http_error_requests_total{application=~\"$app\", route=\"/qa\"}[$__rate_interval])) or vector(0)) / clamp_min((sum(rate(ray_serve_num_router_requests_total{application=~\"$app\", route=\"/qa\"}[$__rate_interval])) or vector(0)), 1)",
           "refId": "A"
         }
       ],
@@ -135,7 +135,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(vllm:generation_tokens_total[30m]))",
+          "expr": "sum(rate(vllm:generation_tokens_total[$__rate_interval]))",
           "refId": "A"
         }
       ],
@@ -150,7 +150,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\"}[30m])) by (route)",
+          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\"}[$__rate_interval])) by (route)",
           "legendFormat": "{{route}}",
           "refId": "A"
         }
@@ -165,17 +165,17 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[$__rate_interval])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[$__rate_interval])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(ray_serve_http_request_latency_ms_bucket{application=~\"$app\", route=\"/qa\"}[$__rate_interval])) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -228,19 +228,19 @@
     },
     {
       "id": 11,
-      "title": "Deployment processing latency p95 (model.generate only)",
+      "title": "Deployment processing latency p95",
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 20, "w": 12, "h": 7},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(ray_serve_deployment_processing_latency_ms_bucket{application=~\"$app\"}) by (le, deployment))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_serve_deployment_processing_latency_ms_bucket{application=~\"$app\"}[$__rate_interval])) by (le, deployment))",
           "legendFormat": "{{deployment}}",
           "refId": "A"
         }
       ],
       "fieldConfig": {"defaults": {"unit": "ms"}},
-      "description": "HTTP latency includes proxy + serialization. This isolates pure inference latency inside the actor."
+      "description": "Ray Serve actor processing latency by deployment. For RagApi this includes retrieval + LLM call; use RAG Pipeline for step breakdown."
     },
     {
       "id": 12,

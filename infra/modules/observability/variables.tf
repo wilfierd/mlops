@@ -17,15 +17,27 @@ variable "ray_namespace" {
 }
 
 variable "prometheus_retention" {
-  description = "How long Prometheus keeps metrics on disk (lab default 6h)"
+  description = "How long Prometheus keeps metrics on disk"
   type        = string
-  default     = "6h"
+  default     = "30d"
 }
 
 variable "prometheus_memory" {
   description = "Memory request for Prometheus pod"
   type        = string
   default     = "512Mi"
+}
+
+variable "persist_prometheus" {
+  description = "Use a PVC for Prometheus TSDB storage (otherwise emptyDir — data lost on pod restart)"
+  type        = bool
+  default     = true
+}
+
+variable "prometheus_storage_size" {
+  description = "PVC size for Prometheus TSDB"
+  type        = string
+  default     = "20Gi"
 }
 
 variable "grafana_admin_password" {

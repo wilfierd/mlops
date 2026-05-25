@@ -33,17 +33,17 @@
       "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(ray_rag_qa_latency_ms_bucket) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_qa_latency_ms_bucket[$__rate_interval])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(ray_rag_qa_latency_ms_bucket) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_latency_ms_bucket[$__rate_interval])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(ray_rag_qa_latency_ms_bucket) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(ray_rag_qa_latency_ms_bucket[$__rate_interval])) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -64,7 +64,7 @@
       "id": 2,
       "targets": [
         {
-          "expr": "sum(rate(ray_rag_qa_requests_total[30m])) by (status)",
+          "expr": "sum(rate(ray_rag_qa_requests_total[$__rate_interval])) by (status)",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
@@ -85,7 +85,7 @@
       "id": 3,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(ray_rag_qa_step_latency_ms_bucket{step!=\"llm\"}) by (le, step))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_step_latency_ms_bucket{step!=\"llm\"}[$__rate_interval])) by (le, step))",
           "legendFormat": "{{step}}",
           "refId": "A"
         }
@@ -168,7 +168,7 @@
       "id": 6,
       "targets": [
         {
-          "expr": "sum(rate(ray_rag_ingest_docs_total[30m])) by (result)",
+          "expr": "sum(rate(ray_rag_ingest_docs_total[$__rate_interval])) by (result)",
           "legendFormat": "{{result}}",
           "refId": "A"
         }
@@ -189,7 +189,7 @@
       "id": 7,
       "targets": [
         {
-          "expr": "sum(rate(ray_rag_ingest_chunks_total[30m]))",
+          "expr": "sum(rate(ray_rag_ingest_chunks_total[$__rate_interval]))",
           "legendFormat": "chunks/s",
           "refId": "A"
         }
@@ -217,13 +217,13 @@
       "id": 8,
       "targets": [
         {
-          "expr": "vllm:num_requests_waiting",
-          "legendFormat": "waiting",
+          "expr": "sum by (pod) (vllm:num_requests_waiting)",
+          "legendFormat": "{{pod}} waiting",
           "refId": "A"
         },
         {
-          "expr": "vllm:num_requests_running",
-          "legendFormat": "running",
+          "expr": "sum by (pod) (vllm:num_requests_running)",
+          "legendFormat": "{{pod}} running",
           "refId": "B"
         }
       ],
@@ -243,13 +243,13 @@
       "id": 9,
       "targets": [
         {
-          "expr": "sum(rate(vllm:generation_tokens_total[30m]))",
-          "legendFormat": "gen tokens/s",
+          "expr": "sum by (pod) (rate(vllm:generation_tokens_total[$__rate_interval]))",
+          "legendFormat": "{{pod}} gen tokens/s",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(vllm:prompt_tokens_total[30m]))",
-          "legendFormat": "prompt tokens/s",
+          "expr": "sum by (pod) (rate(vllm:prompt_tokens_total[$__rate_interval]))",
+          "legendFormat": "{{pod}} prompt tokens/s",
           "refId": "B"
         }
       ],
@@ -276,7 +276,7 @@
       "id": 10,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rest_responses_duration_seconds_bucket{exported_endpoint=\"/collections/{name}/points/query\"}) by (le)) * 1000",
+          "expr": "histogram_quantile(0.95, sum(rate(rest_responses_duration_seconds_bucket{exported_endpoint=\"/collections/{name}/points/query\"}[$__rate_interval])) by (le)) * 1000",
           "legendFormat": "p95 search ms",
           "refId": "A"
         }
@@ -321,7 +321,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(grpc_responses_total[5m]))",
+          "expr": "sum(rate(grpc_responses_total[$__rate_interval]))",
           "legendFormat": "gRPC/s",
           "refId": "A"
         }
@@ -349,12 +349,12 @@
       "id": 12,
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(vllm:time_to_first_token_seconds_bucket) by (le)) * 1000",
+          "expr": "histogram_quantile(0.50, sum(rate(vllm:time_to_first_token_seconds_bucket[$__rate_interval])) by (le)) * 1000",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(vllm:time_to_first_token_seconds_bucket) by (le)) * 1000",
+          "expr": "histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket[$__rate_interval])) by (le)) * 1000",
           "legendFormat": "p95",
           "refId": "B"
         }
@@ -375,12 +375,12 @@
       "id": 13,
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(vllm:request_generation_tokens_bucket) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(vllm:request_generation_tokens_bucket[$__rate_interval])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(vllm:request_generation_tokens_bucket) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(vllm:request_generation_tokens_bucket[$__rate_interval])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         }
@@ -401,12 +401,12 @@
       "id": 14,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(vllm:request_prefill_time_seconds_bucket) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(vllm:request_prefill_time_seconds_bucket[$__rate_interval])) by (le))",
           "legendFormat": "prefill p95",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(vllm:request_decode_time_seconds_bucket) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(vllm:request_decode_time_seconds_bucket[$__rate_interval])) by (le))",
           "legendFormat": "decode p95",
           "refId": "B"
         }
@@ -427,13 +427,13 @@
       "id": 15,
       "targets": [
         {
-          "expr": "vllm:kv_cache_usage_perc * 100",
-          "legendFormat": "kv cache %",
+          "expr": "max by (pod) (vllm:kv_cache_usage_perc * 100)",
+          "legendFormat": "{{pod}} kv cache %",
           "refId": "A"
         },
         {
-          "expr": "increase(vllm:num_preemptions_total[5m])",
-          "legendFormat": "preemptions / 5m",
+          "expr": "sum by (pod) (increase(vllm:num_preemptions_total[$__rate_interval]))",
+          "legendFormat": "{{pod}} preemptions",
           "refId": "B"
         }
       ],
@@ -607,6 +607,146 @@
       ],
       "title": "Pod Restarts (last 30m)",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 96 },
+      "id": 106,
+      "title": "RAG Retrieval Quality",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "short",
+          "decimals": 2
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 97 },
+      "id": 24,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.05, sum(rate(ray_rag_retrieval_top_score_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "p05",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_retrieval_top_score_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "p50",
+          "refId": "B"
+        }
+      ],
+      "title": "Retrieval Top Score",
+      "type": "timeseries",
+      "description": "Low p05/p50 means retrieval quality is weak. If this drops while Qdrant latency is normal, tune chunking, score_threshold, or embeddings."
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "short",
+          "decimals": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 97 },
+      "id": 25,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_retrieval_hits_raw_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "raw p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_retrieval_hits_selected_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "selected p50",
+          "refId": "B"
+        }
+      ],
+      "title": "Retrieval Hits",
+      "type": "timeseries",
+      "description": "raw = hits above score_threshold before MMR; selected = chunks passed to the LLM. raw=0 drives no_hits fallbacks."
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "short",
+          "decimals": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 97 },
+      "id": 26,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_qa_completion_tokens_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_completion_tokens_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "Completion Tokens per Answer",
+      "type": "timeseries",
+      "description": "Explains decode latency. If completion tokens hit QA_MAX_TOKENS, answers are capped and latency is dominated by output length."
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "ms"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 105 },
+      "id": 27,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_qa_ttft_ms_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_ttft_ms_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "App-Observed TTFT (ms)",
+      "type": "timeseries",
+      "description": "TTFT observed by RagApi when streaming from vLLM. Better UX signal than full response latency."
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "ms"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 105 },
+      "id": 28,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_step_latency_ms_bucket[$__rate_interval])) by (le, step))",
+          "legendFormat": "{{step}} p95",
+          "refId": "A"
+        }
+      ],
+      "title": "QA Step Latency p95",
+      "type": "timeseries",
+      "description": "End-to-end breakdown across embed, qdrant, mmr, and llm. The llm line should dominate; if embed/qdrant rise, debug retrieval path first."
     }
   ],
   "refresh": "30s",

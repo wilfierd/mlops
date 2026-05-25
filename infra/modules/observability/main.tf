@@ -169,7 +169,7 @@ resource "kubernetes_config_map" "ray_dashboard" {
   }
 
   data = {
-    "ray-cluster-ops.json" = file("${path.module}/dashboards/ray-serve.json")
+    "ray-cluster-ops.json" = file("${path.module}/dashboards/ray-cluster-ops.json")
   }
 
   depends_on = [helm_release.kube_prom_stack]

@@ -11,10 +11,22 @@
   "templating": {
     "list": [
       {
+        "name": "datasource",
+        "label": "Data Source",
+        "type": "datasource",
+        "query": "prometheus",
+        "refresh": 1,
+        "current": {},
+        "options": [],
+        "includeAll": false,
+        "multi": false,
+        "hide": 0
+      },
+      {
         "name": "app",
         "label": "Application",
         "type": "query",
-        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
         "query": "label_values(ray_serve_num_router_requests_total{application!=\"\"}, application)",
         "refresh": 1,
         "sort": 1,
@@ -30,10 +42,10 @@
       "title": "Running replicas",
       "type": "stat",
       "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
-          "expr": "sum(ray_serve_deployment_replica_healthy{application=\"$app\"})",
+          "expr": "sum(ray_serve_deployment_replica_healthy{application=\"$app\"}) or vector(0)",
           "legendFormat": "running",
           "refId": "A"
         }
@@ -45,10 +57,10 @@
       "title": "Target replicas (autoscaler)",
       "type": "stat",
       "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
-          "expr": "max(ray_serve_autoscaling_target_replicas{application=\"$app\"})",
+          "expr": "max(ray_serve_autoscaling_target_replicas{application=\"$app\"}) or vector(0)",
           "legendFormat": "target",
           "refId": "A"
         }
@@ -59,10 +71,10 @@
       "title": "Total Ray actors (alive)",
       "type": "stat",
       "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
-          "expr": "sum(ray_actors{State=\"ALIVE\"})",
+          "expr": "sum(ray_actors{State=~\"ALIVE.*\"}) or vector(0)",
           "legendFormat": "alive",
           "refId": "A"
         }
@@ -73,7 +85,7 @@
       "title": "Replica count over time",
       "type": "timeseries",
       "gridPos": {"x": 16, "y": 0, "w": 8, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
           "expr": "sum(ray_serve_deployment_replica_healthy{application=\"$app\"}) by (deployment)",
@@ -100,7 +112,7 @@
       "title": "Ongoing requests (per deployment)",
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
           "expr": "sum(ray_serve_num_ongoing_requests_at_replicas{application=\"$app\"}) by (deployment)",
@@ -122,7 +134,7 @@
       "title": "vLLM concurrency (waiting / running)",
       "type": "timeseries",
       "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
           "expr": "sum by (pod) (vllm:num_requests_running)",
@@ -144,7 +156,7 @@
       "title": "Ray node CPU utilization (%)",
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
           "expr": "avg(ray_node_cpu_utilization) by (RayNodeType)",
@@ -159,7 +171,7 @@
       "title": "Ray node memory used (GiB)",
       "type": "timeseries",
       "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
           "expr": "sum(ray_node_mem_used) by (RayNodeType) / 1024 / 1024 / 1024",
@@ -174,7 +186,7 @@
       "title": "Replica spawns (events)",
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 24, "w": 12, "h": 6},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
           "expr": "sum(increase(ray_serve_replica_startup_latency_ms_count{application=\"$app\"}[$__rate_interval])) by (deployment)",
@@ -189,10 +201,10 @@
       "title": "Total router requests handled",
       "type": "stat",
       "gridPos": {"x": 12, "y": 24, "w": 12, "h": 6},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
-          "expr": "sum(ray_serve_num_router_requests_total)",
+          "expr": "sum(ray_serve_num_router_requests_total{application=\"$app\"}) or vector(0)",
           "legendFormat": "total",
           "refId": "A"
         }

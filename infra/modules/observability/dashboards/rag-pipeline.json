@@ -57,19 +57,19 @@
         "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": { "lineWidth": 2 },
-          "unit": "reqps"
+          "unit": "short"
         }
       },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
       "id": 2,
       "targets": [
         {
-          "expr": "sum(rate(ray_rag_qa_requests_total[$__rate_interval])) by (status)",
-          "legendFormat": "{{status}}",
+          "expr": "sum by (pod) (rate(vllm:generation_tokens_total[$__rate_interval]))",
+          "legendFormat": "{{pod}} gen tokens/s",
           "refId": "A"
         }
       ],
-      "title": "QA Request Rate by Status (ok / fallback / error)",
+      "title": "LLM Generated Tokens/s",
       "type": "timeseries"
     },
     {

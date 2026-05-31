@@ -156,18 +156,30 @@
     },
     {
       "id": 7,
-      "title": "Request rate per route",
+      "title": "vLLM Requests Running / Waiting",
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_num_router_requests_total{application=~\"$app\"}[$__rate_interval])) by (route)",
-          "legendFormat": "{{route}}",
+          "expr": "sum by (pod) (vllm:num_requests_running)",
+          "legendFormat": "{{pod}} running",
           "refId": "A"
+        },
+        {
+          "expr": "sum by (pod) (vllm:num_requests_waiting)",
+          "legendFormat": "{{pod}} waiting",
+          "refId": "B"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "reqps"}}
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"lineWidth": 2}
+        }
+      },
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "description": "running = requests currently generating on vLLM. waiting > 0 means vLLM is saturated and requests are queued."
     },
     {
       "id": 8,
@@ -196,25 +208,31 @@
     },
     {
       "id": 9,
-      "title": "Request rate per deployment",
+      "title": "Answer Tokens per Request",
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
-          "expr": "sum(rate(ray_serve_deployment_request_counter_total{application=~\"$app\"}[5m])) by (deployment)",
-          "legendFormat": "{{deployment}}",
+          "expr": "histogram_quantile(0.50, sum(rate(ray_rag_qa_completion_tokens_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "p50",
           "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ray_rag_qa_completion_tokens_bucket[$__rate_interval])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "reqps",
+          "unit": "short",
+          "decimals": 0,
           "custom": {"lineWidth": 2}
         }
       },
       "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
-      "description": "Rate per deployment (RagApi / Embedder). Flat line = stable. Spike = burst. Drop = replica restart."
+      "description": "Generated answer length. Decode latency is roughly answer_tokens / decode_tokens_per_second, so this explains why QA is slow."
     },
     {
       "id": 10,
